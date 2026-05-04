@@ -72,6 +72,8 @@ interface SettingsDialogProps {
   workspaceCardsPerRow: ControlCenterCardsPerRow;
   onWorkspaceCardsPerRowChange: (value: ControlCenterCardsPerRow) => void;
   onOpenExternalUrl: (url: string) => void;
+  /** When set, opens Submissions panel pre-expanded on this submission. */
+  submissionsFocusId?: string | null;
 }
 
 const THEME_VARIANT_LABELS: Record<ThemeVariant, string> = {
@@ -261,6 +263,7 @@ export function SettingsDialog({
   workspaceCardsPerRow,
   onWorkspaceCardsPerRowChange,
   onOpenExternalUrl,
+  submissionsFocusId = null,
 }: SettingsDialogProps) {
   const displayAppVersion = appVersion.trim() || "Unavailable";
   const { hasHydratedWorkspaceList, selectedWorkspace, workspaces } =
@@ -537,7 +540,9 @@ export function SettingsDialog({
               <IntegrationsPane embedded />
             ) : null}
 
-            {activeSection === "submissions" ? <SubmissionsPanel /> : null}
+            {activeSection === "submissions" ? (
+              <SubmissionsPanel initialFocusedId={submissionsFocusId} />
+            ) : null}
 
             {activeSection === "settings" ? (
               <div className="grid gap-6">

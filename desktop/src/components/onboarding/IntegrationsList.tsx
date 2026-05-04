@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+
 import { Button } from "@/components/ui/button";
 import { providerDisplayName, providerIcon } from "./constants";
 
@@ -20,9 +20,9 @@ export function IntegrationsList({
 }: IntegrationsListProps) {
   if (isResolvingIntegrations) {
     return (
-      <div className="mt-6 flex items-center gap-2 text-xs text-muted-foreground" style={{ maxWidth: 480 }}>
-        <Loader2 size={12} className="animate-spin" />
-        Checking integrations...
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3 animate-spin" />
+        Checking integrations…
       </div>
     );
   }
@@ -34,31 +34,31 @@ export function IntegrationsList({
   const logos = pendingIntegrations.provider_logos ?? {};
 
   return (
-    <div className="mt-6" style={{ maxWidth: 480 }}>
-      <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+    <div>
+      <div className="mb-2 text-sm font-medium text-foreground">
         Integrations
       </div>
-      <div className="mt-2 grid gap-2">
+      <div className="grid gap-1.5">
         {pendingIntegrations.connected_providers.map((provider) => (
           <IntegrationRow
-            key={provider}
-            provider={provider}
-            logoUrl={logos[provider]}
             connected
             connecting={connectingProvider === provider}
             disabled={connectingProvider !== null}
+            key={provider}
+            logoUrl={logos[provider]}
             onAction={() => onConnect(provider)}
+            provider={provider}
           />
         ))}
         {pendingIntegrations.missing_providers.map((provider) => (
           <IntegrationRow
-            key={provider}
-            provider={provider}
-            logoUrl={logos[provider]}
             connected={false}
             connecting={connectingProvider === provider}
             disabled={connectingProvider !== null}
+            key={provider}
+            logoUrl={logos[provider]}
             onAction={() => onConnect(provider)}
+            provider={provider}
           />
         ))}
       </div>
@@ -85,48 +85,52 @@ function IntegrationRow({
   onAction: () => void;
 }) {
   return (
-    <div
-      className={`flex items-center justify-between rounded-xl border px-4 py-3 ${
-        connected
-          ? "border-primary/25 bg-primary/5"
-          : "border-border bg-muted/50"
-      }`}
-    >
-      <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+    <div className="flex items-center gap-3 rounded-lg bg-fg-2 px-3 py-2 shadow-subtle-xs">
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-background shadow-subtle-xs">
         {logoUrl ? (
-          <img src={logoUrl} alt="" width={20} height={20} className="shrink-0 rounded" />
+          <img
+            alt=""
+            className="size-4 rounded-sm"
+            height={16}
+            src={logoUrl}
+            width={16}
+          />
         ) : (
-          providerIcon(provider, 20)
+          providerIcon(provider, 16)
         )}
+      </div>
+      <span className="flex-1 truncate text-sm font-medium text-foreground">
         {providerDisplayName(provider)}
       </span>
       {connected ? (
-        <div className="flex items-center gap-3">
-          <Badge variant="outline" className="border-primary/25 text-primary">
-            <span className="inline-block size-1.5 rounded-full bg-primary" />
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-success" />
             Connected
-          </Badge>
+          </span>
           <Button
-            variant="link"
-            size="xs"
             disabled={disabled}
             onClick={onAction}
-            className="text-muted-foreground"
+            size="xs"
+            type="button"
+            variant="link"
           >
-            {connecting ? "Reconnecting..." : "Reconnect"}
+            {connecting ? "Reconnecting…" : "Reconnect"}
           </Button>
         </div>
       ) : (
         <Button
-          variant="outline"
-          size="sm"
+          className="shrink-0"
           disabled={disabled}
           onClick={onAction}
+          size="sm"
+          type="button"
+          variant="bordered"
         >
           {connecting ? (
             <>
-              <Loader2 size={12} className="animate-spin" />
-              Connecting...
+              <Loader2 className="size-3 animate-spin" />
+              Connecting…
             </>
           ) : (
             "Connect"

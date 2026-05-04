@@ -1490,6 +1490,52 @@ interface RuntimeNotificationListOptionsPayload {
     archiveSizeBytes: number;
   }
 
+  interface PublishProgressPayload {
+    phase: "packaging" | "uploading" | "done";
+    stage?: "start" | "progress" | "complete";
+    uploadedBytes?: number;
+    totalBytes?: number;
+    archiveSizeBytes?: number;
+    error?: string;
+  }
+
+  type BundleExclusionReason =
+    | "personal_memory"
+    | "runtime_state"
+    | "credential"
+    | "ignored_dir"
+    | "build_artifact"
+    | "hbignore"
+    | "unselected_app"
+    | "system_file"
+    | "user_excluded";
+
+  interface BundleFilePayload {
+    path: string;
+    sizeBytes: number;
+  }
+
+  interface BundleExclusionPayload {
+    path: string;
+    reason: BundleExclusionReason;
+    sizeBytes: number;
+  }
+
+  interface BundlePreviewPayload {
+    included: BundleFilePayload[];
+    excluded: BundleExclusionPayload[];
+    totalIncludedBytes: number;
+    totalExcludedBytes: number;
+  }
+
+  interface TemplateNameCheckPayload {
+    available: boolean;
+    slug: string;
+    conflict: "yours" | "other" | null;
+    existingTemplateId?: string | null;
+    reason: "checked" | "fallback" | "invalid";
+  }
+
   interface SubmissionRecord {
     id: string;
     author_id: string;
@@ -1559,6 +1605,9 @@ interface RuntimeNotificationListOptionsPayload {
         payload?: DiagnosticsExportRequestPayload,
       ) => Promise<DiagnosticsExportPayload>;
       revealBundle: (bundlePath: string) => Promise<boolean>;
+    };
+    app: {
+      relaunch: () => Promise<void>;
     };
     runtime: {
       getStatus: () => Promise<RuntimeStatusPayload>;
@@ -1770,7 +1819,17 @@ interface RuntimeNotificationListOptionsPayload {
         apps: string[];
         manifest: Record<string, unknown>;
         uploadUrl: string;
+        forceExcludePaths?: string[];
       }): Promise<PackageAndUploadResult>;
+      onPublishProgress: (
+        listener: (payload: PublishProgressPayload) => void,
+      ) => () => void;
+      previewBundle(params: {
+        workspaceId: string;
+        apps: string[];
+        forceExcludePaths?: string[];
+      }): Promise<BundlePreviewPayload>;
+      checkTemplateName(name: string): Promise<TemplateNameCheckPayload>;
       finalizeSubmission(submissionId: string): Promise<FinalizeSubmissionResponse>;
       listSubmissions(): Promise<SubmissionListResponse>;
       deleteSubmission(submissionId: string): Promise<{ deleted: boolean }>;

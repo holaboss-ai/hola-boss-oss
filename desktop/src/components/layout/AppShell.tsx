@@ -1,15 +1,12 @@
 import {
   ArrowLeft,
   Bot,
-  CircleCheck,
   Clock3,
   Folder,
   Globe,
   Inbox,
   LayoutGrid,
   Loader2,
-  TriangleAlert,
-  XCircle,
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -20,6 +17,7 @@ import {
   useState,
 } from "react";
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
+import { BlockingErrorScreen } from "@/components/layout/BlockingErrorScreen";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
   type OperationsDrawerTab,
@@ -45,7 +43,7 @@ import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
 import { SpaceApplicationsExplorerPane } from "@/components/panes/SpaceApplicationsExplorerPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
-import { PublishDialog } from "@/components/publish/PublishDialog";
+import { PublishScreen } from "@/components/publish/PublishScreen";
 import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { StoplightProvider } from "@/lib/StoplightContext";
@@ -1278,81 +1276,6 @@ function runtimeStartupBlockedMessage(
   return "";
 }
 
-function WorkspaceInitializingGate({
-  apps,
-}: {
-  apps: Array<{
-    id: string;
-    label: string;
-    ready: boolean;
-    error: string | null;
-  }>;
-}) {
-  const hasErrors = apps.some((app) => app.error);
-  const readyCount = apps.filter((app) => app.ready).length;
-
-  return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
-      <div className="flex w-full max-w-md flex-col items-center text-center">
-        {hasErrors ? (
-          <TriangleAlert size={20} className="text-destructive" />
-        ) : (
-          <Loader2 size={20} className="animate-spin text-muted-foreground" />
-        )}
-
-        <h2 className="mt-5 text-[17px] font-medium text-foreground">
-          {hasErrors ? "Some apps need attention" : "Setting up workspace"}
-        </h2>
-        <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground">
-          {hasErrors
-            ? "Some workspace apps encountered errors."
-            : "Starting workspace apps. This may take a moment on first setup."}
-        </p>
-
-        <div className="mt-6 w-full space-y-2">
-          {apps.map((app) => (
-            <div
-              key={app.id}
-              className="flex items-center gap-3 rounded-[14px] border border-border bg-muted px-4 py-2.5"
-            >
-              {app.ready ? (
-                <CircleCheck size={14} className="shrink-0 text-primary" />
-              ) : app.error ? (
-                <XCircle size={14} className="shrink-0 text-destructive" />
-              ) : (
-                <Loader2
-                  size={14}
-                  className="shrink-0 animate-spin text-muted-foreground"
-                />
-              )}
-              <span className="min-w-0 flex-1 text-left text-[13px] text-foreground">
-                {app.label}
-              </span>
-              <span
-                className={`text-xs ${
-                  app.ready
-                    ? "text-primary"
-                    : app.error
-                      ? "text-destructive"
-                      : "text-muted-foreground"
-                }`}
-              >
-                {app.ready ? "Ready" : app.error ? "Failed" : "Setting up..."}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {!hasErrors ? (
-          <div className="mt-3 text-[12px] text-muted-foreground">
-            {readyCount} of {apps.length} ready
-          </div>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
 function FocusPlaceholder({
   eyebrow,
   title,
@@ -1379,32 +1302,41 @@ function FocusPlaceholder({
 }
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
+  const [isRelaunching, setIsRelaunching] = useState(false);
+
+  async function handleRelaunch() {
+    if (isRelaunching) {
+      return;
+    }
+    setIsRelaunching(true);
+    // Fire-and-forget: the IPC triggers app.quit() in main, so this promise
+    // never resolves in practice. The spinner exists for the brief window
+    // before the renderer is torn down.
+    try {
+      await window.electronAPI.app.relaunch();
+    } catch {
+      setIsRelaunching(false);
+    }
+  }
+
   return (
-    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-subtle-sm">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.12),transparent_32%),radial-gradient(circle_at_bottom,rgba(247,170,126,0.08),transparent_36%)]" />
-      <div className="relative w-full max-w-180 px-6 py-8">
-        <div className="theme-subtle-surface rounded-[30px] border border-destructive/24 p-6 shadow-subtle-sm sm:p-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-destructive/22 bg-destructive/8 px-3 py-1.5 text-[10px] uppercase text-destructive">
-            <TriangleAlert size={12} />
-            <span>Desktop startup blocked</span>
-          </div>
-          <div className="mt-6 text-[30px] font-semibold text-foreground">
-            The local runtime is unavailable
-          </div>
-          <div className="mt-3 text-sm leading-7 text-muted-foreground">
-            The desktop shell cannot finish restoring workspaces until the
-            embedded runtime is available again.
-          </div>
-          <div className="mt-6 rounded-[20px] border border-destructive/22 bg-destructive/6 px-4 py-4 text-[13px] leading-7 text-foreground">
-            {message}
-          </div>
-          <div className="mt-5 text-[12px] leading-6 text-muted-foreground">
-            Check `runtime.log` in the Electron userData directory and confirm
-            the required desktop runtime configuration is present.
-          </div>
-        </div>
-      </div>
-    </section>
+    <BlockingErrorScreen
+      actions={
+        <Button
+          className="w-full"
+          disabled={isRelaunching}
+          onClick={() => void handleRelaunch()}
+          size="lg"
+          type="button"
+        >
+          {isRelaunching ? <Loader2 className="animate-spin" /> : null}
+          Restart Holaboss
+        </Button>
+      }
+      description="Something is keeping Holaboss from starting. Restarting the app usually clears it — if it doesn't, reinstalling will."
+      technicalDetail={`${message}\n\nFor diagnostics, check runtime.log in the Electron userData directory.`}
+      title="Holaboss couldn't start"
+    />
   );
 }
 
@@ -1465,6 +1397,7 @@ function AppShellContent() {
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
   const [publishOpen, setPublishOpen] = useState(false);
+  const [submissionsFocusId, setSubmissionsFocusId] = useState<string | null>(null);
   const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
     useState(false);
   const [workspaceAppsDialogOpen, setWorkspaceAppsDialogOpen] = useState(false);
@@ -4641,24 +4574,32 @@ function AppShellContent() {
     [filesPaneWidth],
   );
 
+  const hasVisibleSpacePanes = visibleSpacePaneIds.length > 0;
   useEffect(() => {
     if (!spaceMode) {
       return;
     }
 
-    const syncDisplayWidth = () => {
+    let frame: number | null = null;
+    const flush = () => {
+      frame = null;
       setSpaceAgentPaneWidth((current) => clampSpaceAgentPaneWidth(current));
+      if (hasVisibleSpacePanes) {
+        syncUtilityPaneWidths();
+      }
+    };
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(flush);
     };
 
-    syncDisplayWidth();
-    window.addEventListener("resize", syncDisplayWidth);
+    flush();
+    window.addEventListener("resize", schedule);
 
     const host = utilityPaneHostRef.current;
     const observer =
       host && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            syncDisplayWidth();
-          })
+        ? new ResizeObserver(schedule)
         : null;
     if (observer && host) {
       observer.observe(host);
@@ -4666,9 +4607,17 @@ function AppShellContent() {
 
     return () => {
       observer?.disconnect();
-      window.removeEventListener("resize", syncDisplayWidth);
+      window.removeEventListener("resize", schedule);
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
     };
-  }, [clampSpaceAgentPaneWidth, spaceMode]);
+  }, [
+    clampSpaceAgentPaneWidth,
+    hasVisibleSpacePanes,
+    spaceMode,
+    syncUtilityPaneWidths,
+  ]);
 
   const startSpaceDisplayResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4827,30 +4776,6 @@ function AppShellContent() {
     [browserPaneWidth, filesPaneWidth, spaceVisibility],
   );
 
-  useEffect(() => {
-    if (visibleSpacePaneIds.length === 0) {
-      return;
-    }
-
-    syncUtilityPaneWidths();
-    window.addEventListener("resize", syncUtilityPaneWidths);
-
-    const host = utilityPaneHostRef.current;
-    const observer =
-      host && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            syncUtilityPaneWidths();
-          })
-        : null;
-    if (observer && host) {
-      observer.observe(host);
-    }
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", syncUtilityPaneWidths);
-    };
-  }, [syncUtilityPaneWidths, visibleSpacePaneIds.length]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -5222,8 +5147,16 @@ function AppShellContent() {
         open={settingsDialogOpen}
         activeSection={settingsDialogSection}
         appVersion={effectiveAppUpdateStatus?.currentVersion || ""}
-        onSectionChange={setSettingsDialogSection}
-        onClose={() => setSettingsDialogOpen(false)}
+        onSectionChange={(section) => {
+          setSettingsDialogSection(section);
+          if (section !== "submissions") {
+            setSubmissionsFocusId(null);
+          }
+        }}
+        onClose={() => {
+          setSettingsDialogOpen(false);
+          setSubmissionsFocusId(null);
+        }}
         colorScheme={colorScheme}
         onColorSchemeChange={handleColorSchemeChange}
         themeVariant={themeVariant}
@@ -5232,11 +5165,17 @@ function AppShellContent() {
         workspaceCardsPerRow={controlCenterCardsPerRow}
         onWorkspaceCardsPerRowChange={setControlCenterCardsPerRow}
         onOpenExternalUrl={handleOpenExternalUrl}
+        submissionsFocusId={submissionsFocusId}
       />
       {selectedWorkspaceId && (
-        <PublishDialog
-          open={publishOpen}
+        <PublishScreen
           onOpenChange={setPublishOpen}
+          onViewSubmission={(submissionId) => {
+            setSubmissionsFocusId(submissionId);
+            setSettingsDialogSection("submissions");
+            setSettingsDialogOpen(true);
+          }}
+          open={publishOpen}
           workspaceId={selectedWorkspaceId}
         />
       )}

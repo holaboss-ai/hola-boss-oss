@@ -1,10 +1,12 @@
-import { Check } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { OnboardingUserButton } from "./OnboardingUserButton";
+import { cn } from "@/lib/utils";
 
 interface CreatingViewProps {
+  /** Outer section class — kept for API parity with the wizard shell. */
   sectionClassName: string;
   creatingViaMarketplace: boolean;
+  /** Reserved for parity with previous API; the new shell renders chrome. */
   showUserButton?: boolean;
   panelVariant?: boolean;
   browserBootstrapMode?: "fresh" | "copy_workspace" | "import_browser";
@@ -18,16 +20,15 @@ interface CreatingViewProps {
 export function CreatingView({
   sectionClassName,
   creatingViaMarketplace,
-  showUserButton = true,
-  panelVariant = false,
+  panelVariant: _panelVariant = false,
   browserBootstrapMode = "fresh",
   workspaceCreatePhase = "creating_workspace",
 }: CreatingViewProps) {
   const title = creatingViaMarketplace
-    ? "Launching sandbox"
-    : "Preparing workspace";
+    ? "Launching your workspace"
+    : "Preparing your workspace";
   const detail = creatingViaMarketplace
-    ? "Starting a fresh sandbox. Workspace setup continues as soon as the sandbox is ready."
+    ? "Spinning up a sandbox and importing your template. This usually takes under a minute."
     : "Preparing the local runtime and importing your template.";
   const steps = creatingViaMarketplace
     ? [
@@ -49,7 +50,6 @@ export function CreatingView({
         "Opening workspace",
       ];
 
-  // Simulate progress through steps for visual feedback
   const [activeStep, setActiveStep] = useState(0);
   useEffect(() => {
     if (workspaceCreatePhase === "creating_workspace") {
@@ -66,7 +66,7 @@ export function CreatingView({
 
   useEffect(() => {
     if (workspaceCreatePhase !== "creating_workspace") {
-      return undefined;
+      return;
     }
     const timer = setInterval(() => {
       setActiveStep((prev) => (prev < steps.length - 1 ? prev + 1 : prev));
@@ -75,125 +75,110 @@ export function CreatingView({
   }, [steps.length, workspaceCreatePhase]);
 
   return (
-    <section className={`${sectionClassName} grid place-items-center`}>
-      {/* Ambient glow — uses theme primary */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute left-1/2 top-1/3 size-[600px] -translate-x-1/2 -translate-y-1/2 animate-pulse rounded-full bg-primary/[0.04] blur-[120px]" />
-      </div>
-
-      {showUserButton ? (
-        <div className="absolute right-4 top-4 z-10">
-          <OnboardingUserButton />
-        </div>
-      ) : null}
-
-      <div
-        className={`w-full ${panelVariant ? "h-full max-w-[1020px]" : "max-w-[540px]"}`}
-      >
-        <div
-          className={`theme-shell mx-auto flex w-full flex-col items-center rounded-xl border border-border shadow-lg ${
-            panelVariant
-              ? "h-full max-w-[1020px] justify-center px-6 py-6 sm:px-8 sm:py-7 lg:px-10 lg:py-8"
-              : "max-w-[540px] px-6 py-8 sm:px-8"
-          }`}
-        >
-          {/* Spinner with branded ring */}
-          <div className="relative flex size-14 items-center justify-center">
+    <section className={cn(sectionClassName, "grid place-items-center")}>
+      <div className="w-full max-w-[440px] px-5 pb-8">
+        <div className="rounded-2xl bg-background px-9 pt-12 pb-9 shadow-subtle-sm">
+          {/* Halo spinner — same DNA as the publish success card */}
+          <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10 ring-[6px] ring-primary/[0.05]">
             <svg
-              className="absolute inset-0 size-full animate-spin"
-              viewBox="0 0 56 56"
+              aria-hidden
+              className="size-6 animate-spin text-primary"
               fill="none"
-              style={{ animationDuration: "1.8s" }}
+              style={{ animationDuration: "1.4s" }}
+              viewBox="0 0 24 24"
             >
               <circle
-                cx="28"
-                cy="28"
-                r="24"
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="9.5"
                 stroke="currentColor"
                 strokeWidth="2.5"
-                className="text-border"
               />
               <path
-                d="M28 4a24 24 0 0 1 24 24"
+                d="M12 2.5A9.5 9.5 0 0 1 21.5 12"
                 stroke="currentColor"
-                strokeWidth="2.5"
                 strokeLinecap="round"
-                className="text-primary"
+                strokeWidth="2.5"
               />
             </svg>
-            <div className="size-2 rounded-full bg-primary animate-pulse" />
           </div>
 
-          {/* Title */}
-          <h2 className="mt-8 text-2xl font-semibold tracking-tight text-foreground">
+          {/* Title + body */}
+          <h2 className="mt-6 text-center text-xl font-semibold tracking-tight text-foreground">
             {title}
           </h2>
-
-          {/* Description */}
-          <p className="mt-2 max-w-sm text-center text-sm leading-relaxed text-muted-foreground">
+          <p className="mx-auto mt-2 max-w-[320px] text-center text-sm leading-relaxed text-muted-foreground">
             {detail}
           </p>
 
-          {/* Progress steps */}
-          <div className="mt-10 w-full max-w-xs">
-            <div className="flex flex-col gap-0">
-              {steps.map((step, i) => {
-                const isDone = i < activeStep;
-                const isActive = i === activeStep;
+          {/* Summary rows — one per step. Mirrors the FlowAI ready-to-automate
+              card: icon block on the left, label + status text in the middle,
+              status indicator on the right. */}
+          <ol className="mt-8 grid gap-1.5">
+            {steps.map((step, i) => {
+              const isDone = i < activeStep;
+              const isActive = i === activeStep;
+              const status = isDone
+                ? "Done"
+                : isActive
+                  ? "In progress…"
+                  : "Up next";
 
-                return (
-                  <div key={step} className="flex items-stretch gap-3">
-                    {/* Vertical track */}
-                    <div className="flex w-5 flex-col items-center">
-                      {/* Node */}
-                      <div
-                        className={`relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-500 ${
-                          isDone
-                            ? "border-primary bg-primary"
-                            : isActive
-                              ? "border-primary bg-background"
-                              : "border-border bg-background"
-                        }`}
-                      >
-                        {isDone ? (
-                          <Check
-                            size={10}
-                            className="text-primary-foreground"
-                          />
-                        ) : isActive ? (
-                          <div className="size-1.5 rounded-full bg-primary animate-pulse" />
-                        ) : null}
-                      </div>
-                      {/* Connector line */}
-                      {i < steps.length - 1 ? (
-                        <div className="relative w-0.5 flex-1 min-h-5 bg-border">
-                          <div
-                            className="absolute inset-0 bg-primary transition-colors duration-700"
-                            style={{ height: isDone ? "100%" : "0%" }}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {/* Label */}
-                    <div className="pb-5">
-                      <span
-                        className={`text-sm transition-colors duration-300 ${
-                          isDone
-                            ? "font-medium text-foreground"
-                            : isActive
-                              ? "font-medium text-foreground"
-                              : "text-muted-foreground"
-                        }`}
-                      >
-                        {step}
-                      </span>
-                    </div>
+              return (
+                <li
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors shadow-subtle-xs",
+                    isActive ? "bg-primary/[0.06]" : "bg-fg-2",
+                  )}
+                  key={step}
+                >
+                  <div
+                    className={cn(
+                      "flex size-7 shrink-0 items-center justify-center rounded-md transition-colors",
+                      isDone
+                        ? "bg-primary text-primary-foreground"
+                        : isActive
+                          ? "bg-background text-primary shadow-subtle-xs"
+                          : "bg-background text-muted-foreground shadow-subtle-xs",
+                    )}
+                  >
+                    {isDone ? (
+                      <Check className="size-3.5" strokeWidth={3} />
+                    ) : isActive ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <span className="size-1.5 rounded-full bg-fg-24" />
+                    )}
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className={cn(
+                        "truncate text-sm transition-colors",
+                        isDone || isActive
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {step}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "shrink-0 text-xs tabular-nums transition-colors",
+                      isActive
+                        ? "text-primary"
+                        : isDone
+                          ? "text-muted-foreground"
+                          : "text-muted-foreground/70",
+                    )}
+                  >
+                    {status}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
         </div>
       </div>
     </section>

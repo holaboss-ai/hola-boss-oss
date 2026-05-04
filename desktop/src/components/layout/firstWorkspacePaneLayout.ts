@@ -6,19 +6,22 @@ type FirstWorkspacePaneStep =
   | "browser_profile"
   | "connect_integrations";
 
+/**
+ * Outer section className used by FirstWorkspacePane. The pane itself is the
+ * canvas (`bg-fg-2`) — this just controls scroll behavior and padding for the
+ * inner step content. Step routing decides whether the content is a wide
+ * marketplace browser (gallery/detail) or a centered card (everything else).
+ */
 export function firstWorkspacePaneSectionClassName(
-  step: FirstWorkspacePaneStep,
+  _step: FirstWorkspacePaneStep,
 ): string {
   return [
     "relative",
-    "h-full",
+    "flex",
     "min-h-0",
     "min-w-0",
-    "overflow-auto",
-    "px-3",
-    "py-3",
-    "sm:px-4",
-    "sm:py-4",
-    "grid place-items-center",
+    "flex-1",
+    "flex-col",
+    "overflow-y-auto",
   ].join(" ");
 }

@@ -1178,6 +1178,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     revealBundle: (bundlePath: string) =>
       ipcRenderer.invoke("diagnostics:revealBundle", bundlePath) as Promise<boolean>,
   },
+  app: {
+    relaunch: () => ipcRenderer.invoke("app:relaunch") as Promise<void>,
+  },
   runtime: {
     getStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,
     restart: () => ipcRenderer.invoke("runtime:restart") as Promise<RuntimeStatusPayload>,
@@ -1530,8 +1533,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
       apps: string[];
       manifest: Record<string, unknown>;
       uploadUrl: string;
+      forceExcludePaths?: string[];
     }) =>
       ipcRenderer.invoke("workspace:packageAndUploadWorkspace", params) as Promise<PackageAndUploadResult>,
+    onPublishProgress: (
+      listener: (payload: PublishProgressPayload) => void,
+    ) => {
+      const wrapped = (_e: Electron.IpcRendererEvent, payload: PublishProgressPayload) => listener(payload);
+      ipcRenderer.on("workspace:publishProgress", wrapped);
+      return () => ipcRenderer.removeListener("workspace:publishProgress", wrapped);
+    },
+    previewBundle: (params: { workspaceId: string; apps: string[]; forceExcludePaths?: string[] }) =>
+      ipcRenderer.invoke("workspace:previewBundle", params) as Promise<BundlePreviewPayload>,
+    checkTemplateName: (name: string) =>
+      ipcRenderer.invoke("workspace:checkTemplateName", name) as Promise<TemplateNameCheckPayload>,
     finalizeSubmission: (submissionId: string) =>
       ipcRenderer.invoke("workspace:finalizeSubmission", submissionId) as Promise<FinalizeSubmissionResponse>,
     listSubmissions: () =>

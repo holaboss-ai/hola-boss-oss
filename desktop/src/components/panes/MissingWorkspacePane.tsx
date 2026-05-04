@@ -1,5 +1,7 @@
-import { FolderX, FolderOpen, Trash2, Loader2 } from "lucide-react";
+import { FolderOpen, FolderX, Loader2, Trash2 } from "lucide-react";
 import { useState } from "react";
+
+import { BlockingErrorScreen } from "@/components/layout/BlockingErrorScreen";
 import { Button } from "@/components/ui/button";
 
 interface MissingWorkspacePaneProps {
@@ -49,66 +51,48 @@ export function MissingWorkspacePane({
   }
 
   return (
-    <div className="flex h-full w-full items-center justify-center px-6 py-12">
-      <div className="w-full max-w-md rounded-xl border border-border bg-card px-6 py-8">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
-            <FolderX size={18} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-foreground">
-              Workspace folder is missing
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Holaboss can't find the folder for{" "}
-              <span className="font-medium text-foreground">{workspaceName}</span>.
-              It may have been moved, deleted, or be on a drive that's not
-              mounted right now.
-            </p>
-            {workspacePath ? (
-              <div
-                className="mt-3 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs text-muted-foreground"
-                title={workspacePath}
-              >
-                {workspacePath}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="mt-5 flex flex-col gap-2">
+    <BlockingErrorScreen
+      actions={
+        <>
           <Button
-            onClick={() => void handleRelocate()}
+            className="flex-1"
             disabled={isRelocating || isDeleting}
-            className="h-10 justify-start gap-2"
+            onClick={() => void handleRelocate()}
+            size="lg"
+            type="button"
           >
             {isRelocating ? (
-              <Loader2 size={14} className="animate-spin" />
+              <Loader2 className="animate-spin" />
             ) : (
-              <FolderOpen size={14} />
+              <FolderOpen />
             )}
             Relocate to a folder…
           </Button>
           <Button
-            variant="ghost"
-            onClick={() => void handleDelete()}
             disabled={isRelocating || isDeleting}
-            className="h-10 justify-start gap-2 text-muted-foreground hover:text-destructive"
+            onClick={() => void handleDelete()}
+            size="lg"
+            type="button"
+            variant="bordered"
           >
-            {isDeleting ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Trash2 size={14} />
-            )}
-            Remove this workspace from Holaboss
+            {isDeleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            Remove
           </Button>
-        </div>
-
-        <p className="mt-4 text-xs text-muted-foreground">
-          Picking a folder: choose an empty folder to start fresh, or the
-          original workspace folder if you moved it.
-        </p>
-      </div>
-    </div>
+        </>
+      }
+      description={
+        <>
+          Holaboss can't find the folder for{" "}
+          <span className="font-medium text-foreground">{workspaceName}</span>.
+          It may have been moved, deleted, or live on a drive that isn't
+          mounted right now.
+        </>
+      }
+      technicalDetail={workspacePath ?? undefined}
+      hint="Pick the original folder if you moved it, or an empty folder to start fresh."
+      icon={FolderX}
+      title="Workspace folder is missing"
+      tone="warning"
+    />
   );
 }

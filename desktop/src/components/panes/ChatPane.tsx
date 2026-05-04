@@ -43,6 +43,8 @@ import {
   Lightbulb,
   Link2,
   Loader2,
+  ListTree,
+  MoreHorizontal,
   Paperclip,
   PencilLine,
   Plus,
@@ -55,6 +57,13 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { BackgroundTasksPane } from "@/components/panes/BackgroundTasksPane";
@@ -7919,7 +7928,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             </div>
           ) : null}
           <div
-            className="relative min-h-0 flex-1 overflow-hidden"
+            className="group/chat-scroll relative min-h-0 flex-1 overflow-hidden"
             style={{
               maskImage: chatScrollMaskImage(),
               WebkitMaskImage: chatScrollMaskImage(),
@@ -7951,7 +7960,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className={`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 pt-5 ${
+                  className={`flex min-w-0 w-full flex-col gap-4 pl-4 pr-7 pb-3 pt-5 ${
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
                 >
@@ -8126,7 +8135,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             </div>
 
             {showCustomChatScrollbar ? (
-              <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
+              <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4 opacity-0 transition-opacity duration-200 group-hover/chat-scroll:opacity-100">
                 <div
                   className="pointer-events-auto absolute inset-x-0 touch-none"
                   style={{
@@ -8507,7 +8516,7 @@ export function UserTurn({
 
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
-      <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-1 sm:max-w-[560px] lg:max-w-[680px]">
+      <div className="flex min-w-0 max-w-[80%] flex-col items-end gap-2">
         {parsedQuotedSkills.skillIds.length > 0 ? (
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             {parsedQuotedSkills.skillIds.map((skillId) => (
@@ -8522,7 +8531,7 @@ export function UserTurn({
           </div>
         ) : null}
         {userBubbleText ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-2xl px-[18px] py-2.5 text-foreground">
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-lg px-3 py-1.5 text-foreground">
             <div
               ref={bubbleContentRef}
               className="relative overflow-hidden transition-[max-height] duration-300 ease-out"
@@ -8792,6 +8801,106 @@ function QueuedSessionInputRail({
   );
 }
 
+function executionItemsHaveFileEdits(
+  items: ChatExecutionTimelineItem[],
+): boolean {
+  if (items.length === 0) {
+    return false;
+  }
+  return items.some((item) => {
+    if (item.kind !== "trace_step" || item.step.kind !== "tool") {
+      return false;
+    }
+    const title = item.step.title.toLowerCase();
+    return (
+      title.startsWith("edit") ||
+      title.startsWith("write") ||
+      title.startsWith("patch") ||
+      title.startsWith("replace") ||
+      title.startsWith("multiedit") ||
+      title.startsWith("apply") ||
+      title.startsWith("create file")
+    );
+  });
+}
+
+interface AssistantTurnActionsMenuProps {
+  copyText: string;
+  onViewTurnDetails?: () => void;
+  onViewFileChanges?: () => void;
+  hasFileEdits?: boolean;
+}
+
+function AssistantTurnActionsMenu({
+  copyText,
+  onViewTurnDetails,
+  onViewFileChanges,
+  hasFileEdits,
+}: AssistantTurnActionsMenuProps) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    if (!copyText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(copyText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }
+
+  const showFileChanges = Boolean(onViewFileChanges) && Boolean(hasFileEdits);
+  const canCopy = copyText.trim().length > 0;
+
+  if (!canCopy && !onViewTurnDetails && !showFileChanges) {
+    return null;
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            aria-label="Turn actions"
+            className="size-6 rounded-lg text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <MoreHorizontal className="size-3.5" strokeWidth={1.9} />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-44" sideOffset={4}>
+        {canCopy ? (
+          <DropdownMenuItem onClick={() => void handleCopy()}>
+            {copied ? <Check /> : <Copy />}
+            {copied ? "Copied" : "Copy message"}
+          </DropdownMenuItem>
+        ) : null}
+        {onViewTurnDetails ? (
+          <DropdownMenuItem onClick={onViewTurnDetails}>
+            <ListTree />
+            View turn details
+          </DropdownMenuItem>
+        ) : null}
+        {showFileChanges ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onViewFileChanges}>
+              <FileCode2 />
+              View file changes
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AssistantTurn({
   label,
   mode,
@@ -8894,6 +9003,26 @@ export function AssistantTurn({
     live && Boolean(normalizedStatus) && renderedSegments.length === 0;
   const showWorkingStatusLine =
     live && showExecutionInternals && renderedSegments.length > 0;
+
+  const [forceExpandToken, setForceExpandToken] = useState(0);
+  const hasFileEdits = useMemo(
+    () => executionItemsHaveFileEdits(executionItems),
+    [executionItems],
+  );
+  const copyText = useMemo(
+    () =>
+      renderedSegments
+        .filter(
+          (segment): segment is Extract<ChatAssistantSegment, { kind: "output" }> =>
+            segment.kind === "output",
+        )
+        .map((segment) => segment.text)
+        .join("\n\n")
+        .trim() || text.trim(),
+    [renderedSegments, text],
+  );
+  const hasAnyContent = renderedSegments.length > 0;
+  const showActionsMenu = hasAnyContent && !live;
   const renderStatusLine = (nextLabel: string, className = "") => {
     if (!showExecutionInternals) {
       return (
@@ -8918,13 +9047,9 @@ export function AssistantTurn({
 
   return (
     <div
-      className={`flex min-w-0 justify-start ${showSeparator ? "mt-2" : ""}`.trim()}
+      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-4" : ""}`.trim()}
     >
-      <article
-        className={`min-w-0 w-full max-w-4xl ${
-          showSeparator ? "rounded-[1.75rem] bg-muted/35 px-5 py-4" : ""
-        }`.trim()}
-      >
+      <article className="min-w-0 w-full max-w-4xl rounded-lg bg-muted/60 px-3 py-2">
         {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
         {renderedSegments.map((segment, index) =>
@@ -8943,6 +9068,7 @@ export function AssistantTurn({
               }
               onLinkClick={onLinkClick}
               onLocalLinkClick={onLocalLinkClick}
+              forceExpandToken={forceExpandToken}
             />
           ) : segment.tone === "error" ? (
             <div
@@ -9006,6 +9132,25 @@ export function AssistantTurn({
           />
         ) : null}
       </article>
+
+      {showActionsMenu ? (
+        <div className="pointer-events-none absolute top-1.5 right-1.5 opacity-0 transition-opacity duration-150 group-hover/assistant-turn:pointer-events-auto group-hover/assistant-turn:opacity-100 group-focus-within/assistant-turn:pointer-events-auto group-focus-within/assistant-turn:opacity-100">
+          <AssistantTurnActionsMenu
+            copyText={copyText}
+            hasFileEdits={hasFileEdits}
+            onViewFileChanges={
+              hasFileEdits
+                ? () => setForceExpandToken((token) => token + 1)
+                : undefined
+            }
+            onViewTurnDetails={
+              executionItems.length > 0
+                ? () => setForceExpandToken((token) => token + 1)
+                : undefined
+            }
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -9814,7 +9959,8 @@ function LiveStatusLine({
   return (
     <div
       aria-live="polite"
-      className={`inline-flex items-baseline gap-0.5 text-xs leading-6 text-muted-foreground ${className}`.trim()}
+      key={normalizedLabel}
+      className={`inline-flex items-baseline gap-0.5 text-xs leading-6 text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-0.5 duration-200 ease-out ${className}`.trim()}
     >
       <span>{normalizedLabel}</span>
       <LiveStatusEllipsis />
@@ -9833,7 +9979,7 @@ function TypingStatusLine({
     <div
       aria-live="polite"
       aria-label="Assistant is typing"
-      className={`inline-flex items-center text-[18px] leading-none tracking-[0.18em] text-muted-foreground/78 ${className}`.trim()}
+      className={`inline-flex items-center text-[18px] leading-none tracking-[0.18em] text-muted-foreground/78 animate-in fade-in-0 duration-200 ease-out ${className}`.trim()}
     >
       <LiveStatusEllipsis />
     </div>
@@ -9950,6 +10096,7 @@ function TraceStepGroup({
   liveOutputStarted = false,
   onLinkClick,
   onLocalLinkClick,
+  forceExpandToken = 0,
 }: {
   items: ChatExecutionTimelineItem[];
   collapsedByStepId: Record<string, boolean>;
@@ -9958,6 +10105,7 @@ function TraceStepGroup({
   liveOutputStarted?: boolean;
   onLinkClick?: (url: string) => void;
   onLocalLinkClick?: (href: string) => void;
+  forceExpandToken?: number;
 }) {
   const steps = traceStepsFromExecutionItems(items);
   const [groupExpanded, setGroupExpanded] = useState(
@@ -9965,6 +10113,16 @@ function TraceStepGroup({
   );
   const previousLiveRef = useRef(live);
   const previousLiveOutputStartedRef = useRef(liveOutputStarted);
+  const previousForceExpandTokenRef = useRef(forceExpandToken);
+
+  useEffect(() => {
+    if (forceExpandToken !== previousForceExpandTokenRef.current) {
+      previousForceExpandTokenRef.current = forceExpandToken;
+      if (forceExpandToken > 0) {
+        setGroupExpanded(true);
+      }
+    }
+  }, [forceExpandToken]);
 
   useEffect(() => {
     if (live && !previousLiveRef.current) {
@@ -10021,8 +10179,8 @@ function TraceStepGroup({
         ? `Running ${stepLabel}...`
         : latestThinkingItem
           ? summarizeThinking(latestThinkingItem.text)
-          : stepCount > 0
-            ? `Used ${stepLabel}`
+          : stepCount > 0 && latestStep
+            ? latestStep.title
             : "Execution trace";
 
   return (
@@ -10041,10 +10199,18 @@ function TraceStepGroup({
         ) : (
           <Check className="size-3.5 shrink-0 text-success" />
         )}
-        <span className="min-w-0 flex-1 leading-5">
+        <span className="min-w-0 flex-1 truncate leading-5">
           {summaryLabel}
           {summarySuffix}
         </span>
+        {stepCount > 0 && !groupIsLive && !groupHasTerminalError ? (
+          <span
+            aria-hidden
+            className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground"
+          >
+            {stepCount}
+          </span>
+        ) : null}
         <ChevronDown
           className={`size-3 shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
         />

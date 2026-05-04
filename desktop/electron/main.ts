@@ -13713,6 +13713,8 @@ async function createWorkspace(
     hasTemplateRootPath: Boolean(templateRootPath),
     harness,
     requiresRuntimeBinding,
+    templateApps: payload.template_apps ?? [],
+    templateAppsCount: (payload.template_apps ?? []).length,
   });
   if (requiresRuntimeBinding) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
@@ -20392,6 +20394,16 @@ app.whenReady().then(async () => {
     await restartEmbeddedRuntimeSafely("manual_restart");
     return refreshRuntimeStatus();
   });
+  // Full app relaunch — heavier hammer than runtime:restart, used by error
+  // surfaces where the renderer/main may itself be in a bad state (e.g. the
+  // "Holaboss couldn't start" blocker). Electron's app.relaunch() schedules
+  // the next instance, then app.quit() exits the current one. Awaiting the
+  // IPC roundtrip is meaningless because the process is going away — the
+  // renderer just kicks it and forgets.
+  handleTrustedIpc("app:relaunch", ["main"], () => {
+    app.relaunch();
+    app.quit();
+  });
   handleTrustedIpc("auth:getUser", ["main", "auth-popup"], async () =>
     getAuthenticatedUser(),
   );
@@ -21261,31 +21273,114 @@ app.whenReady().then(async () => {
     "workspace:packageAndUploadWorkspace",
     ["main"],
     async (
-      _event,
+      event,
       params: {
         workspaceId: string;
         apps: string[];
         manifest: Record<string, unknown>;
         uploadUrl: string;
+        forceExcludePaths?: string[];
       },
     ) => {
+      const sender = event.sender;
+      const emit = (
+        phase: "packaging" | "uploading" | "done",
+        detail: Record<string, unknown> = {},
+      ) => {
+        try {
+          if (!sender.isDestroyed()) {
+            sender.send("workspace:publishProgress", { phase, ...detail });
+          }
+        } catch {
+          // best-effort
+        }
+      };
       try {
         const { packageWorkspace, uploadToPresignedUrl } =
           await import("./workspace-packager.js");
         const workspaceDir = await resolveWorkspaceDir(params.workspaceId);
         const runtimeUrl = runtimeBaseUrl();
+        emit("packaging", { stage: "start" });
         const result = await packageWorkspace({
           workspaceDir,
           apps: params.apps,
           manifest: params.manifest,
           runtimeBaseUrl: runtimeUrl,
           workspaceId: params.workspaceId,
+          forceExcludePaths: params.forceExcludePaths ?? [],
         });
-        await uploadToPresignedUrl(params.uploadUrl, result.archiveBuffer);
+        emit("packaging", { stage: "complete", archiveSizeBytes: result.archiveSizeBytes });
+        emit("uploading", { stage: "start", totalBytes: result.archiveSizeBytes });
+        await uploadToPresignedUrl(params.uploadUrl, result.archiveBuffer, {
+          retries: 2,
+          onProgress: ({ uploadedBytes, totalBytes }) => {
+            emit("uploading", { stage: "progress", uploadedBytes, totalBytes });
+          },
+        });
+        emit("done", { archiveSizeBytes: result.archiveSizeBytes });
         return { archiveSizeBytes: result.archiveSizeBytes };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
+        emit("done", { error: msg });
         throw new Error(`packageAndUploadWorkspace failed: ${msg}`);
+      }
+    },
+  );
+  handleTrustedIpc(
+    "workspace:previewBundle",
+    ["main"],
+    async (
+      _event,
+      params: { workspaceId: string; apps: string[]; forceExcludePaths?: string[] },
+    ) => {
+      const { previewBundle } = await import("./workspace-packager.js");
+      const workspaceDir = await resolveWorkspaceDir(params.workspaceId);
+      return previewBundle(workspaceDir, params.apps, params.forceExcludePaths ?? []);
+    },
+  );
+  handleTrustedIpc(
+    "workspace:checkTemplateName",
+    ["main"],
+    async (_event, name: string) => {
+      // Local validation always runs; server check is best-effort and degrades
+      // gracefully when the backend hasn't deployed the endpoint yet.
+      const trimmed = (name ?? "").trim();
+      const slug = trimmed
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 50);
+      const localValid = trimmed.length > 0 && slug.length > 0;
+      if (!localValid) {
+        return { available: false, slug, conflict: null, reason: "invalid" as const };
+      }
+      try {
+        const baseUrl = marketplaceBffBaseUrl();
+        const cookie = await authCookieHeader();
+        const url = `${baseUrl}/submissions/check-name?name=${encodeURIComponent(trimmed)}`;
+        const res = await fetch(url, {
+          method: "GET",
+          headers: cookie ? { Cookie: cookie } : undefined,
+        });
+        if (!res.ok) {
+          // Endpoint not ready — fall back to "available" so UI doesn't block.
+          return { available: true, slug, conflict: null, reason: "fallback" as const };
+        }
+        const body = (await res.json()) as {
+          available: boolean;
+          slug: string;
+          conflict?: "yours" | "other" | null;
+          existing_template_id?: string | null;
+        };
+        return {
+          available: body.available,
+          slug: body.slug ?? slug,
+          conflict: body.conflict ?? null,
+          existingTemplateId: body.existing_template_id ?? null,
+          reason: "checked" as const,
+        };
+      } catch {
+        return { available: true, slug, conflict: null, reason: "fallback" as const };
       }
     },
   );
