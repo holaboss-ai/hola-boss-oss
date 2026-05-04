@@ -7627,7 +7627,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                   void loadOlderSessionHistory();
                 }
               }}
-              className={`h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
+              className={`chat-scrollbar-thin h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
               {hasMessages ? (
                 <div
