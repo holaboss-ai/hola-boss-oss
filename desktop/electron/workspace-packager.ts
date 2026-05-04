@@ -1,5 +1,4 @@
 import archiver from "archiver";
-import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { request as httpRequest } from "node:http";
@@ -214,6 +213,15 @@ function parseHbIgnore(content: string): string[] {
     patterns.push(line);
   }
   return patterns;
+}
+
+async function readHbIgnore(hbIgnorePath: string): Promise<string[]> {
+  try {
+    return parseHbIgnore(await fs.readFile(hbIgnorePath, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 /**
@@ -509,10 +517,7 @@ export async function previewBundle(
   forceExcludePaths: string[] = [],
 ): Promise<BundlePreview> {
   const hbIgnorePath = path.join(workspaceDir, ".hbignore");
-  let hbPatterns: string[] = [];
-  if (existsSync(hbIgnorePath)) {
-    hbPatterns = parseHbIgnore(readFileSync(hbIgnorePath, "utf8"));
-  }
+  const hbPatterns = await readHbIgnore(hbIgnorePath);
 
   const included: BundleFileEntry[] = [];
   const excluded: BundleExclusion[] = [];
@@ -593,13 +598,8 @@ export async function packageWorkspace(
     automationsFetcher = fetchAndSerializeAutomations,
   } = params;
 
-  // Read .hbignore if present
   const hbIgnorePath = path.join(workspaceDir, ".hbignore");
-  let hbPatterns: string[] = [];
-  if (existsSync(hbIgnorePath)) {
-    const content = readFileSync(hbIgnorePath, "utf8");
-    hbPatterns = parseHbIgnore(content);
-  }
+  const hbPatterns = await readHbIgnore(hbIgnorePath);
 
   // Collect files
   const relPaths = await collectFiles(workspaceDir, workspaceDir, apps, hbPatterns, forceExcludePaths);

@@ -4453,24 +4453,32 @@ function AppShellContent() {
     [filesPaneWidth],
   );
 
+  const hasVisibleSpacePanes = visibleSpacePaneIds.length > 0;
   useEffect(() => {
     if (!spaceMode) {
       return;
     }
 
-    const syncDisplayWidth = () => {
+    let frame: number | null = null;
+    const flush = () => {
+      frame = null;
       setSpaceAgentPaneWidth((current) => clampSpaceAgentPaneWidth(current));
+      if (hasVisibleSpacePanes) {
+        syncUtilityPaneWidths();
+      }
+    };
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(flush);
     };
 
-    syncDisplayWidth();
-    window.addEventListener("resize", syncDisplayWidth);
+    flush();
+    window.addEventListener("resize", schedule);
 
     const host = utilityPaneHostRef.current;
     const observer =
       host && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            syncDisplayWidth();
-          })
+        ? new ResizeObserver(schedule)
         : null;
     if (observer && host) {
       observer.observe(host);
@@ -4478,9 +4486,17 @@ function AppShellContent() {
 
     return () => {
       observer?.disconnect();
-      window.removeEventListener("resize", syncDisplayWidth);
+      window.removeEventListener("resize", schedule);
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
     };
-  }, [clampSpaceAgentPaneWidth, spaceMode]);
+  }, [
+    clampSpaceAgentPaneWidth,
+    hasVisibleSpacePanes,
+    spaceMode,
+    syncUtilityPaneWidths,
+  ]);
 
   const startSpaceDisplayResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4639,30 +4655,6 @@ function AppShellContent() {
     [browserPaneWidth, filesPaneWidth, spaceVisibility],
   );
 
-  useEffect(() => {
-    if (visibleSpacePaneIds.length === 0) {
-      return;
-    }
-
-    syncUtilityPaneWidths();
-    window.addEventListener("resize", syncUtilityPaneWidths);
-
-    const host = utilityPaneHostRef.current;
-    const observer =
-      host && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            syncUtilityPaneWidths();
-          })
-        : null;
-    if (observer && host) {
-      observer.observe(host);
-    }
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", syncUtilityPaneWidths);
-    };
-  }, [syncUtilityPaneWidths, visibleSpacePaneIds.length]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
