@@ -3,6 +3,7 @@ import {
   type ClipboardEvent,
   type CompositionEvent,
   type DragEvent,
+  Fragment,
   FormEvent,
   KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -965,6 +966,178 @@ function assistantSegmentsIncludeOutput(segments: ChatAssistantSegment[]) {
   return segments.some(
     (segment) => segment.kind === "output" && Boolean(segment.text.trim()),
   );
+}
+
+export function chatMessagesFromSessionState(params: {
+  historyMessages: SessionHistoryMessagePayload[];
+  outputEvents: SessionOutputEventPayload[];
+  outputs: WorkspaceOutputRecordPayload[];
+  memoryProposals: MemoryUpdateProposalRecordPayload[];
+  knownAssistantInputIds?: Set<string>;
+  showExecutionInternals: boolean;
+}): ChatMessage[] {
+  const outputEventsByInputId = new Map<
+    string,
+    SessionOutputEventPayload[]
+  >();
+  const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
+  const memoryProposalsByInputId = new Map<
+    string,
+    MemoryUpdateProposalRecordPayload[]
+  >();
+  for (const event of params.outputEvents) {
+    const inputId = event.input_id.trim();
+    if (!inputId) {
+      continue;
+    }
+    const existing = outputEventsByInputId.get(inputId);
+    if (existing) {
+      existing.push(event);
+    } else {
+      outputEventsByInputId.set(inputId, [event]);
+    }
+  }
+  for (const output of params.outputs) {
+    const inputId = (output.input_id || "").trim();
+    if (!inputId) {
+      continue;
+    }
+    const existing = outputsByInputId.get(inputId);
+    if (existing) {
+      existing.push(output);
+    } else {
+      outputsByInputId.set(inputId, [output]);
+    }
+  }
+  for (const proposal of params.memoryProposals) {
+    const inputId = proposal.input_id.trim();
+    if (!inputId) {
+      continue;
+    }
+    const existing = memoryProposalsByInputId.get(inputId);
+    if (existing) {
+      existing.push(proposal);
+    } else {
+      memoryProposalsByInputId.set(inputId, [proposal]);
+    }
+  }
+
+  const assistantHistoryInputIds = new Set(params.knownAssistantInputIds ?? []);
+  for (const message of params.historyMessages) {
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const inputId = inputIdFromMessageId(message.id, "assistant");
+    if (inputId) {
+      assistantHistoryInputIds.add(inputId);
+    }
+  }
+
+  return params.historyMessages
+    .flatMap((message) => {
+      const attachments = attachmentsFromMetadata(message.metadata);
+      const nextMessage: ChatMessage = {
+        id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
+        role: message.role as ChatMessage["role"],
+        text: message.text,
+        createdAt: message.created_at || undefined,
+        attachments,
+      };
+      const renderedMessages: ChatMessage[] = [nextMessage];
+
+      if (nextMessage.role === "assistant") {
+        const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
+        if (inputId) {
+          const restoredAssistantState = assistantHistoryStateFromOutputEvents(
+            outputEventsByInputId.get(inputId) ?? [],
+          );
+          const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
+          const turnMemoryProposals = sortMemoryUpdateProposals(
+            memoryProposalsByInputId.get(inputId) ?? [],
+          );
+          if (restoredAssistantState.segments) {
+            nextMessage.segments = restoredAssistantState.segments;
+            nextMessage.text = "";
+            nextMessage.executionItems = undefined;
+          } else if (restoredAssistantState.executionItems) {
+            nextMessage.executionItems = restoredAssistantState.executionItems;
+          }
+          if (
+            !nextMessage.text &&
+            !nextMessage.segments &&
+            restoredAssistantState.failureText
+          ) {
+            nextMessage.text = restoredAssistantState.failureText;
+            nextMessage.tone = "error";
+          }
+          if (turnMemoryProposals.length > 0) {
+            nextMessage.memoryProposals = turnMemoryProposals;
+          }
+          if (turnOutputs.length > 0) {
+            nextMessage.outputs = turnOutputs;
+          }
+        }
+      }
+
+      const userInputId =
+        nextMessage.role === "user"
+          ? inputIdFromMessageId(nextMessage.id, "user")
+          : "";
+      if (
+        nextMessage.role === "user" &&
+        userInputId &&
+        !assistantHistoryInputIds.has(userInputId)
+      ) {
+        const restoredAssistantState = assistantHistoryStateFromOutputEvents(
+          outputEventsByInputId.get(userInputId) ?? [],
+        );
+        const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
+        const turnMemoryProposals = sortMemoryUpdateProposals(
+          memoryProposalsByInputId.get(userInputId) ?? [],
+        );
+        const syntheticAssistantMessage: ChatMessage = {
+          id: `assistant-${userInputId}`,
+          role: "assistant",
+          text:
+            restoredAssistantState.segments ||
+            !restoredAssistantState.failureText
+              ? ""
+              : restoredAssistantState.failureText,
+          tone:
+            restoredAssistantState.segments ||
+            !restoredAssistantState.failureText
+              ? "default"
+              : "error",
+          createdAt:
+            restoredAssistantState.terminalCreatedAt || nextMessage.createdAt,
+          segments: restoredAssistantState.segments,
+          executionItems: restoredAssistantState.segments
+            ? undefined
+            : restoredAssistantState.executionItems,
+          outputs: turnOutputs.length > 0 ? turnOutputs : undefined,
+          memoryProposals:
+            turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
+        };
+        if (
+          hasRenderableAssistantTurn(syntheticAssistantMessage, {
+            showExecutionInternals: params.showExecutionInternals,
+          })
+        ) {
+          renderedMessages.push(syntheticAssistantMessage);
+        }
+      }
+
+      return renderedMessages;
+    })
+    .filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant") &&
+        (message.role === "assistant"
+          ? hasRenderableAssistantTurn(message, {
+              showExecutionInternals: params.showExecutionInternals,
+            })
+          : hasRenderableMessageContent(message.text, message.attachments ?? [])),
+    );
 }
 
 function formatAttachmentSize(sizeBytes: number) {
@@ -3610,181 +3783,15 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     memoryProposals: MemoryUpdateProposalRecordPayload[],
     knownAssistantInputIds: Set<string> = new Set(),
   ): ChatMessage[] {
-    const outputEventsByInputId = new Map<
-      string,
-      SessionOutputEventPayload[]
-    >();
-    const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
-    const memoryProposalsByInputId = new Map<
-      string,
-      MemoryUpdateProposalRecordPayload[]
-    >();
-    for (const event of outputEvents) {
-      const inputId = event.input_id.trim();
-      if (!inputId) {
-        continue;
-      }
-      const existing = outputEventsByInputId.get(inputId);
-      if (existing) {
-        existing.push(event);
-      } else {
-        outputEventsByInputId.set(inputId, [event]);
-      }
-    }
-    for (const output of outputs) {
-      const inputId = (output.input_id || "").trim();
-      if (!inputId) {
-        continue;
-      }
-      const existing = outputsByInputId.get(inputId);
-      if (existing) {
-        existing.push(output);
-      } else {
-        outputsByInputId.set(inputId, [output]);
-      }
-    }
-    for (const proposal of memoryProposals) {
-      const inputId = proposal.input_id.trim();
-      if (!inputId) {
-        continue;
-      }
-      const existing = memoryProposalsByInputId.get(inputId);
-      if (existing) {
-        existing.push(proposal);
-      } else {
-        memoryProposalsByInputId.set(inputId, [proposal]);
-      }
-    }
-
-    const assistantHistoryInputIds = new Set(knownAssistantInputIds);
-    for (const message of historyMessages) {
-      if (message.role !== "assistant") {
-        continue;
-      }
-      const inputId = inputIdFromMessageId(message.id, "assistant");
-      if (inputId) {
-        assistantHistoryInputIds.add(inputId);
-      }
-    }
-
-    return historyMessages
-      .flatMap((message) => {
-        const attachments = attachmentsFromMetadata(message.metadata);
-        const nextMessage: ChatMessage = {
-          id:
-            message.id ||
-            `history-${message.created_at ?? crypto.randomUUID()}`,
-          role: message.role as ChatMessage["role"],
-          text: message.text,
-          createdAt: message.created_at || undefined,
-          attachments,
-        };
-        const renderedMessages: ChatMessage[] = [nextMessage];
-
-        if (nextMessage.role === "assistant") {
-          const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
-          if (inputId) {
-            const restoredAssistantState =
-              assistantHistoryStateFromOutputEvents(
-                outputEventsByInputId.get(inputId) ?? [],
-              );
-            const turnOutputs = sortOutputs(
-              outputsByInputId.get(inputId) ?? [],
-            );
-            const turnMemoryProposals = sortMemoryUpdateProposals(
-              memoryProposalsByInputId.get(inputId) ?? [],
-            );
-            if (restoredAssistantState.segments) {
-              nextMessage.segments = restoredAssistantState.segments;
-              nextMessage.text = "";
-              nextMessage.executionItems = undefined;
-            } else if (restoredAssistantState.executionItems) {
-              nextMessage.executionItems =
-                restoredAssistantState.executionItems;
-            }
-            if (
-              !nextMessage.text &&
-              !nextMessage.segments &&
-              restoredAssistantState.failureText
-            ) {
-              nextMessage.text = restoredAssistantState.failureText;
-              nextMessage.tone = "error";
-            }
-            if (turnMemoryProposals.length > 0) {
-              nextMessage.memoryProposals = turnMemoryProposals;
-            }
-            if (turnOutputs.length > 0) {
-              nextMessage.outputs = turnOutputs;
-            }
-          }
-        }
-
-        const userInputId =
-          nextMessage.role === "user"
-            ? inputIdFromMessageId(nextMessage.id, "user")
-            : "";
-        if (
-          nextMessage.role === "user" &&
-          userInputId &&
-          !assistantHistoryInputIds.has(userInputId)
-        ) {
-          const restoredAssistantState = assistantHistoryStateFromOutputEvents(
-            outputEventsByInputId.get(userInputId) ?? [],
-          );
-          const turnOutputs = sortOutputs(
-            outputsByInputId.get(userInputId) ?? [],
-          );
-          const turnMemoryProposals = sortMemoryUpdateProposals(
-            memoryProposalsByInputId.get(userInputId) ?? [],
-          );
-          const syntheticAssistantMessage: ChatMessage = {
-            id: `assistant-${userInputId}`,
-            role: "assistant",
-            text:
-              restoredAssistantState.segments ||
-              !restoredAssistantState.failureText
-                ? ""
-                : restoredAssistantState.failureText,
-            tone:
-              restoredAssistantState.segments ||
-              !restoredAssistantState.failureText
-                ? "default"
-                : "error",
-            createdAt:
-              restoredAssistantState.terminalCreatedAt || nextMessage.createdAt,
-            segments: restoredAssistantState.segments,
-            executionItems: restoredAssistantState.segments
-              ? undefined
-              : restoredAssistantState.executionItems,
-            outputs: turnOutputs.length > 0 ? turnOutputs : undefined,
-            memoryProposals:
-              turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
-          };
-          if (
-            hasRenderableAssistantTurn(syntheticAssistantMessage, {
-              showExecutionInternals:
-                shouldShowExecutionInternalsForSession(sessionId),
-            })
-          ) {
-            renderedMessages.push(syntheticAssistantMessage);
-          }
-        }
-
-        return renderedMessages;
-      })
-      .filter(
-        (message) =>
-          (message.role === "user" || message.role === "assistant") &&
-          (message.role === "assistant"
-            ? hasRenderableAssistantTurn(message, {
-                showExecutionInternals:
-                  shouldShowExecutionInternalsForSession(sessionId),
-              })
-            : hasRenderableMessageContent(
-                message.text,
-                message.attachments ?? [],
-              )),
-      );
+    return chatMessagesFromSessionState({
+      historyMessages,
+      outputEvents,
+      outputs,
+      memoryProposals,
+      knownAssistantInputIds,
+      showExecutionInternals:
+        shouldShowExecutionInternalsForSession(sessionId),
+    });
   }
 
   async function loadSessionHistoryPage(
@@ -7958,114 +7965,66 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       </div>
                     </div>
                   ) : null}
-                  {displayMessages.map((message, index) =>
-                    message.role === "user" ? (
-                      <UserTurn
-                        key={message.id}
-                        text={message.text}
-                        createdAt={message.createdAt}
-                        attachments={message.attachments ?? []}
-                        onPreviewAttachment={openImageAttachmentPreview}
-                        onLinkClick={onOpenLinkInBrowser}
-                        onLocalLinkClick={onOpenLocalLink}
-                      />
-                    ) : (
-                      <AssistantTurn
-                        key={message.id}
-                        label={assistantLabel}
-                        mode={assistantMode}
-                        showSeparator={index > 0}
-                        showExecutionInternals={
-                          showSessionExecutionInternals
+                  <ConversationTurns
+                    messages={displayMessages}
+                    assistantLabel={assistantLabel}
+                    assistantMode={assistantMode}
+                    showExecutionInternals={showSessionExecutionInternals}
+                    onPreviewAttachment={openImageAttachmentPreview}
+                    onOpenOutput={onOpenOutput}
+                    onOpenAllArtifacts={(outputs) => {
+                      setArtifactBrowserFilter("all");
+                      setArtifactBrowserScopedOutputs(outputs);
+                      setArtifactBrowserScope("reply");
+                      setArtifactBrowserOpen(true);
+                    }}
+                    collapsedTraceByStepId={collapsedTraceByStepId}
+                    onToggleTraceStep={toggleTraceStep}
+                    onLinkClick={onOpenLinkInBrowser}
+                    onLocalLinkClick={onOpenLocalLink}
+                    memoryProposalAction={memoryProposalAction}
+                    editingMemoryProposalId={editingMemoryProposalId}
+                    memoryProposalDrafts={memoryProposalDrafts}
+                    onEditMemoryProposal={(message, proposalId) => {
+                      setEditingMemoryProposalId((current) => {
+                        const next =
+                          current === proposalId ? null : proposalId;
+                        if (next === proposalId) {
+                          const proposal = (
+                            message.memoryProposals ?? []
+                          ).find((item) => item.proposal_id === proposalId);
+                          if (proposal) {
+                            setMemoryProposalDrafts((prev) => ({
+                              ...prev,
+                              [proposalId]:
+                                prev[proposalId] ?? proposal.summary,
+                            }));
+                          }
                         }
-                        text={message.text}
-                        tone={message.tone ?? "default"}
-                        segments={message.segments ?? []}
-                        executionItems={message.executionItems ?? []}
-                        memoryProposals={message.memoryProposals ?? []}
-                        outputs={message.outputs ?? []}
-                        memoryProposalAction={memoryProposalAction}
-                        editingMemoryProposalId={editingMemoryProposalId}
-                        memoryProposalDrafts={memoryProposalDrafts}
-                        onEditMemoryProposal={(proposalId) => {
-                          setEditingMemoryProposalId((current) => {
-                            const next =
-                              current === proposalId ? null : proposalId;
-                            if (next === proposalId) {
-                              const proposal = (
-                                message.memoryProposals ?? []
-                              ).find((item) => item.proposal_id === proposalId);
-                              if (proposal) {
-                                setMemoryProposalDrafts((prev) => ({
-                                  ...prev,
-                                  [proposalId]:
-                                    prev[proposalId] ?? proposal.summary,
-                                }));
-                              }
-                            }
-                            return next;
-                          });
-                        }}
-                        onMemoryProposalDraftChange={updateMemoryProposalDraft}
-                        onAcceptMemoryProposal={handleAcceptMemoryProposal}
-                        onDismissMemoryProposal={handleDismissMemoryProposal}
-                        onOpenOutput={onOpenOutput}
-                        onOpenAllArtifacts={(outputs) => {
-                          setArtifactBrowserFilter("all");
-                          setArtifactBrowserScopedOutputs(outputs);
-                          setArtifactBrowserScope("reply");
-                          setArtifactBrowserOpen(true);
-                        }}
-                        collapsedTraceByStepId={collapsedTraceByStepId}
-                        onToggleTraceStep={toggleTraceStep}
-                        onLinkClick={onOpenLinkInBrowser}
-                        onLocalLinkClick={onOpenLocalLink}
-                        footerAccessory={
-                          message.id === lastCompletedAssistantMessageId
-                            ? sessionBrowserJumpCta
-                            : null
-                        }
-                      />
-                    ),
-                  )}
-
-                  {showLiveAssistantTurn ? (
-                    <AssistantTurn
-                      label={assistantLabel}
-                      mode={assistantMode}
-                      showSeparator={displayMessages.length > 0}
-                      showExecutionInternals={showSessionExecutionInternals}
-                      text={liveAssistantText}
-                      tone="default"
-                      segments={renderedLiveAssistantSegments}
-                      executionItems={liveExecutionItems}
-                      memoryProposals={[]}
-                      outputs={[]}
-                      memoryProposalAction={memoryProposalAction}
-                      editingMemoryProposalId={editingMemoryProposalId}
-                      memoryProposalDrafts={memoryProposalDrafts}
-                      onEditMemoryProposal={() => undefined}
-                      onMemoryProposalDraftChange={updateMemoryProposalDraft}
-                      onAcceptMemoryProposal={handleAcceptMemoryProposal}
-                      onDismissMemoryProposal={handleDismissMemoryProposal}
-                      onOpenOutput={onOpenOutput}
-                      onOpenAllArtifacts={(outputs) => {
-                        setArtifactBrowserFilter("all");
-                        setArtifactBrowserScopedOutputs(outputs);
-                        setArtifactBrowserScope("reply");
-                        setArtifactBrowserOpen(true);
-                      }}
-                      collapsedTraceByStepId={collapsedTraceByStepId}
-                      onToggleTraceStep={toggleTraceStep}
-                      onLinkClick={onOpenLinkInBrowser}
-                      onLocalLinkClick={onOpenLocalLink}
-                      live
-                      statusAccessory={sessionBrowserJumpCta}
-                      status={
-                        liveAgentStatus || (isResponding ? "Working" : "")
-                      }
-                    />
-                  ) : null}
+                        return next;
+                      });
+                    }}
+                    onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                    onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                    onDismissMemoryProposal={handleDismissMemoryProposal}
+                    assistantFooterAccessoryMessageId={
+                      lastCompletedAssistantMessageId
+                    }
+                    assistantFooterAccessory={sessionBrowserJumpCta}
+                    liveAssistantTurn={
+                      showLiveAssistantTurn
+                        ? {
+                            text: liveAssistantText,
+                            tone: "default",
+                            segments: renderedLiveAssistantSegments,
+                            executionItems: liveExecutionItems,
+                            status:
+                              liveAgentStatus || (isResponding ? "Working" : ""),
+                            statusAccessory: sessionBrowserJumpCta,
+                          }
+                        : null
+                    }
+                  />
                 </div>
               ) : (
                 <div
@@ -9480,6 +9439,160 @@ function AssistantTurnMemoryProposals({
         );
       })}
     </div>
+  );
+}
+
+export function ConversationTurns<Message extends ChatMessage>({
+  messages,
+  assistantLabel,
+  assistantMode,
+  showExecutionInternals,
+  onPreviewAttachment,
+  onOpenOutput,
+  onOpenAllArtifacts,
+  collapsedTraceByStepId,
+  onToggleTraceStep,
+  onLinkClick,
+  onLocalLinkClick,
+  memoryProposalAction,
+  editingMemoryProposalId,
+  memoryProposalDrafts,
+  onEditMemoryProposal,
+  onMemoryProposalDraftChange,
+  onAcceptMemoryProposal,
+  onDismissMemoryProposal,
+  assistantFooterAccessoryMessageId = null,
+  assistantFooterAccessory = null,
+  getMessageWrapperClassName,
+  liveAssistantTurn = null,
+}: {
+  messages: Message[];
+  assistantLabel: string;
+  assistantMode: string;
+  showExecutionInternals: boolean;
+  onPreviewAttachment?: (attachment: AttachmentListItem) => void;
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  onOpenAllArtifacts: (outputs: WorkspaceOutputRecordPayload[]) => void;
+  collapsedTraceByStepId: Record<string, boolean>;
+  onToggleTraceStep: (stepId: string) => void;
+  onLinkClick?: (url: string) => void;
+  onLocalLinkClick?: (href: string) => void;
+  memoryProposalAction: {
+    proposalId: string;
+    action: "accept" | "dismiss";
+  } | null;
+  editingMemoryProposalId: string | null;
+  memoryProposalDrafts: Record<string, string>;
+  onEditMemoryProposal: (message: Message, proposalId: string) => void;
+  onMemoryProposalDraftChange: (proposalId: string, value: string) => void;
+  onAcceptMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onDismissMemoryProposal: (
+    proposal: MemoryUpdateProposalRecordPayload,
+  ) => void;
+  assistantFooterAccessoryMessageId?: string | null;
+  assistantFooterAccessory?: ReactNode;
+  getMessageWrapperClassName?: (message: Message) => string | undefined;
+  liveAssistantTurn?: {
+    text: string;
+    tone?: ChatMessage["tone"];
+    segments: ChatAssistantSegment[];
+    executionItems: ChatExecutionTimelineItem[];
+    status?: string;
+    statusAccessory?: ReactNode;
+    footerAccessory?: ReactNode;
+  } | null;
+}) {
+  return (
+    <>
+      {messages.map((message, index) => {
+        const wrapperClassName = getMessageWrapperClassName?.(message)?.trim();
+        const turn =
+          message.role === "user" ? (
+            <UserTurn
+              text={message.text}
+              createdAt={message.createdAt}
+              attachments={message.attachments ?? []}
+              onPreviewAttachment={onPreviewAttachment}
+              onLinkClick={onLinkClick}
+              onLocalLinkClick={onLocalLinkClick}
+            />
+          ) : (
+            <AssistantTurn
+              label={assistantLabel}
+              mode={assistantMode}
+              showSeparator={index > 0}
+              showExecutionInternals={showExecutionInternals}
+              text={message.text}
+              tone={message.tone ?? "default"}
+              segments={message.segments ?? []}
+              executionItems={message.executionItems ?? []}
+              memoryProposals={message.memoryProposals ?? []}
+              outputs={message.outputs ?? []}
+              memoryProposalAction={memoryProposalAction}
+              editingMemoryProposalId={editingMemoryProposalId}
+              memoryProposalDrafts={memoryProposalDrafts}
+              onEditMemoryProposal={(proposalId) =>
+                onEditMemoryProposal(message, proposalId)
+              }
+              onMemoryProposalDraftChange={onMemoryProposalDraftChange}
+              onAcceptMemoryProposal={onAcceptMemoryProposal}
+              onDismissMemoryProposal={onDismissMemoryProposal}
+              onOpenOutput={onOpenOutput}
+              onOpenAllArtifacts={onOpenAllArtifacts}
+              collapsedTraceByStepId={collapsedTraceByStepId}
+              onToggleTraceStep={onToggleTraceStep}
+              onLinkClick={onLinkClick}
+              onLocalLinkClick={onLocalLinkClick}
+              footerAccessory={
+                message.id === assistantFooterAccessoryMessageId
+                  ? assistantFooterAccessory
+                  : null
+              }
+            />
+          );
+
+        if (wrapperClassName) {
+          return (
+            <div key={message.id} className={wrapperClassName}>
+              {turn}
+            </div>
+          );
+        }
+        return <Fragment key={message.id}>{turn}</Fragment>;
+      })}
+
+      {liveAssistantTurn ? (
+        <AssistantTurn
+          label={assistantLabel}
+          mode={assistantMode}
+          showSeparator={messages.length > 0}
+          showExecutionInternals={showExecutionInternals}
+          text={liveAssistantTurn.text}
+          tone={liveAssistantTurn.tone ?? "default"}
+          segments={liveAssistantTurn.segments}
+          executionItems={liveAssistantTurn.executionItems}
+          memoryProposals={[]}
+          outputs={[]}
+          memoryProposalAction={memoryProposalAction}
+          editingMemoryProposalId={editingMemoryProposalId}
+          memoryProposalDrafts={memoryProposalDrafts}
+          onEditMemoryProposal={() => undefined}
+          onMemoryProposalDraftChange={onMemoryProposalDraftChange}
+          onAcceptMemoryProposal={onAcceptMemoryProposal}
+          onDismissMemoryProposal={onDismissMemoryProposal}
+          onOpenOutput={onOpenOutput}
+          onOpenAllArtifacts={onOpenAllArtifacts}
+          collapsedTraceByStepId={collapsedTraceByStepId}
+          onToggleTraceStep={onToggleTraceStep}
+          onLinkClick={onLinkClick}
+          onLocalLinkClick={onLocalLinkClick}
+          live
+          statusAccessory={liveAssistantTurn.statusAccessory ?? null}
+          status={liveAssistantTurn.status ?? ""}
+          footerAccessory={liveAssistantTurn.footerAccessory ?? null}
+        />
+      ) : null}
+    </>
   );
 }
 

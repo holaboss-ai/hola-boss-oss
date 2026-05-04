@@ -12,12 +12,9 @@ test("workspace control center renders preview cards through the main chat turn 
 
   assert.match(
     source,
-    /import \{[\s\S]*AssistantTurn,[\s\S]*ArtifactBrowserModal,[\s\S]*type ArtifactBrowserFilter,[\s\S]*type ChatMessage,[\s\S]*UserTurn,[\s\S]*\} from "@\/components\/panes\/ChatPane";/,
+    /import \{[\s\S]*ArtifactBrowserModal,[\s\S]*chatMessagesFromSessionState,[\s\S]*ConversationTurns,[\s\S]*type ArtifactBrowserFilter,[\s\S]*type ChatMessage,[\s\S]*\} from "@\/components\/panes\/ChatPane";/,
   );
-  assert.match(source, /attachmentsFromMetadata\(message\.metadata\)/);
-  assert.match(source, /nextMessage\.outputs = turnOutputs;/);
-  assert.match(source, /<UserTurn/);
-  assert.match(source, /<AssistantTurn/);
+  assert.match(source, /<ConversationTurns/);
   assert.match(source, /onOpenOutput=\{\(output\) =>/);
   assert.match(source, /onOpenOutput\(workspaceId, output\)/);
   assert.match(source, /const \[artifactBrowserOpen, setArtifactBrowserOpen\] = useState\(false\);/);
@@ -30,17 +27,64 @@ test("workspace control center renders preview cards through the main chat turn 
   assert.match(source, /<ArtifactBrowserModal[\s\S]*layout="card"/);
 });
 
+test("workspace control center renders a live assistant placeholder in the chat pane instead of a working frame badge", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(source, /const \[liveAssistantText, setLiveAssistantText\] = useState\(""\);/);
+  assert.match(source, /const \[liveAgentStatus, setLiveAgentStatus\] = useState\(""\);/);
+  assert.match(source, /const liveAssistantTurn =/);
+  assert.match(source, /isResponding \|\| Boolean\(liveAssistantText\.trim\(\)\)/);
+  assert.match(source, /status: liveAgentStatus \|\| \(isResponding \? "Working" : ""\),/);
+  assert.match(source, /setLiveAssistantText\(\(current\) => `\$\{current\}\$\{delta\}`\);/);
+  assert.match(source, /runtimeCardState !== "working" && runtimeCardState !== "queued" \? \(/);
+  assert.match(source, /liveAssistantTurn=\{liveAssistantTurn\}/);
+  assert.match(source, /showExecutionInternals=\{false\}/);
+  assert.doesNotMatch(source, /TypingStatusLine/);
+});
+
+test("workspace control center retries terminal refreshes so completed replies do not wait for a manual reload", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const CONTROL_CENTER_TERMINAL_REFRESH_DELAYS_MS = \[150, 500, 1_500, 3_000\];/,
+  );
+  assert.match(
+    source,
+    /const terminalRefreshTimerIdsRef = useRef<number\[]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /const clearScheduledTerminalRefreshes = useCallback\(\(\) => \{/,
+  );
+  assert.match(
+    source,
+    /const scheduleTerminalRefresh = useCallback\(\(\) => \{/,
+  );
+  assert.match(
+    source,
+    /for \(const delayMs of CONTROL_CENTER_TERMINAL_REFRESH_DELAYS_MS\)/,
+  );
+  assert.match(
+    source,
+    /void refreshSnapshot\(\{ attachStream: false \}\)\.catch\(\(\) => undefined\);/,
+  );
+  assert.match(source, /payload\.type === "done"[\s\S]*scheduleTerminalRefresh\(\);/);
+  assert.match(source, /eventType === "run_completed"[\s\S]*scheduleTerminalRefresh\(\);/);
+  assert.match(source, /eventType === "run_failed"[\s\S]*scheduleTerminalRefresh\(\);/);
+});
+
 test("workspace control center loads the latest main-session history slice and recent turn outputs", async () => {
   const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
 
   assert.match(source, /order: "desc"/);
   assert.match(source, /historyMessagesInDisplayOrder\(\s*history\.messages,\s*"desc"/);
-  assert.match(source, /window\.electronAPI\.workspace\.listOutputs\(\{\s*workspaceId,\s*sessionId,/);
   assert.match(source, /turnInputIdsFromHistoryMessages\(historyMessages\)/);
-  assert.match(
-    source,
-    /outputsResponse\.items\.filter\(\(output\) =>\s*previewInputIds\.has\(\(output\.input_id \|\| ""\)\.trim\(\)\),/,
-  );
+  assert.match(source, /window\.electronAPI\.workspace\.getSessionOutputEvents\(\{/);
+  assert.match(source, /window\.electronAPI\.workspace\.listOutputs\(\{/);
+  assert.match(source, /window\.electronAPI\.workspace\.listMemoryUpdateProposals\(\{/);
+  assert.match(source, /chatMessagesFromSessionState\(\{/);
+  assert.match(source, /showExecutionInternals: false,/);
 });
 
 test("workspace control center sizes cards to fit up to two visible rows before hitting a minimum height", async () => {

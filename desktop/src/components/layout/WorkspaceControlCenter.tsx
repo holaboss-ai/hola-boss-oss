@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Loader2,
   SendHorizontal,
-  Sparkles,
   TriangleAlert,
 } from "lucide-react";
 import {
@@ -18,16 +17,13 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-  AssistantTurn,
   ArtifactBrowserModal,
+  chatMessagesFromSessionState,
+  ConversationTurns,
   type ArtifactBrowserFilter,
-  attachmentsFromMetadata,
   historyMessagesInDisplayOrder,
-  inputIdFromMessageId,
-  sortOutputs,
   turnInputIdsFromHistoryMessages,
   type ChatMessage,
-  UserTurn,
 } from "@/components/panes/ChatPane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +44,7 @@ const WORKSPACE_CARD_MAX_HEIGHT = 480;
 const WORKSPACE_CARD_VISIBLE_ROWS = 2;
 const CONTROL_CENTER_WHEEL_SWIPE_THRESHOLD_PX = 140;
 const CONTROL_CENTER_WHEEL_SWIPE_RESET_MS = 180;
+const CONTROL_CENTER_TERMINAL_REFRESH_DELAYS_MS = [150, 500, 1_500, 3_000];
 
 type PreviewChatMessage = ChatMessage & {
   optimistic?: boolean;
@@ -102,106 +99,6 @@ function runtimeStateEffectiveStatus(
   return runtimeStateStatus(
     runtimeState?.effective_state ?? runtimeState?.status,
   );
-}
-
-function normalizedPreviewText(text: string) {
-  return text.replace(/\r\n/g, "\n").trim();
-}
-
-function previewMessageHasRenderableContent(message: PreviewChatMessage) {
-  if (message.role === "user") {
-    return (
-      Boolean(message.text.trim()) ||
-      (message.attachments?.length ?? 0) > 0
-    );
-  }
-  return (
-    Boolean(message.text.trim()) ||
-    (message.outputs?.length ?? 0) > 0 ||
-    (message.segments?.length ?? 0) > 0 ||
-    (message.executionItems?.length ?? 0) > 0
-  );
-}
-
-function previewMessagesFromSessionState(params: {
-  historyMessages: SessionHistoryMessagePayload[];
-  outputs: WorkspaceOutputRecordPayload[];
-}): PreviewChatMessage[] {
-  const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
-  for (const output of params.outputs) {
-    const inputId = (output.input_id || "").trim();
-    if (!inputId) {
-      continue;
-    }
-    const existing = outputsByInputId.get(inputId);
-    if (existing) {
-      existing.push(output);
-    } else {
-      outputsByInputId.set(inputId, [output]);
-    }
-  }
-
-  const assistantHistoryInputIds = new Set<string>();
-  for (const message of params.historyMessages) {
-    if (message.role !== "assistant") {
-      continue;
-    }
-    const inputId = inputIdFromMessageId(message.id, "assistant");
-    if (inputId) {
-      assistantHistoryInputIds.add(inputId);
-    }
-  }
-
-  return params.historyMessages
-    .flatMap((message) => {
-      if (message.role !== "user" && message.role !== "assistant") {
-        return [];
-      }
-
-      const nextMessage: PreviewChatMessage = {
-        id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
-        role: message.role as "user" | "assistant",
-        text: normalizedPreviewText(message.text || ""),
-        createdAt: message.created_at ?? undefined,
-        attachments: attachmentsFromMetadata(message.metadata),
-      };
-      const renderedMessages: PreviewChatMessage[] = [nextMessage];
-
-      if (nextMessage.role === "assistant") {
-        const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
-        if (inputId) {
-          const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
-          if (turnOutputs.length > 0) {
-            nextMessage.outputs = turnOutputs;
-          }
-        }
-      }
-
-      const userInputId =
-        nextMessage.role === "user"
-          ? inputIdFromMessageId(nextMessage.id, "user")
-          : "";
-      if (
-        nextMessage.role === "user" &&
-        userInputId &&
-        !assistantHistoryInputIds.has(userInputId)
-      ) {
-        const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
-        if (turnOutputs.length > 0) {
-          renderedMessages.push({
-            id: `assistant-${userInputId}`,
-            role: "assistant",
-            text: "",
-            createdAt: nextMessage.createdAt,
-            outputs: turnOutputs,
-          });
-        }
-      }
-
-      return renderedMessages;
-    })
-    .filter((message) => previewMessageHasRenderableContent(message))
-    .slice(-PREVIEW_MESSAGE_LIMIT);
 }
 
 function trimPreviewMessages(messages: PreviewChatMessage[]) {
@@ -350,6 +247,8 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
+  const [liveAssistantText, setLiveAssistantText] = useState("");
+  const [liveAgentStatus, setLiveAgentStatus] = useState("");
   const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
   const [artifactBrowserFilter, setArtifactBrowserFilter] =
     useState<ArtifactBrowserFilter>("all");
@@ -360,6 +259,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   const shouldStickToBottomRef = useRef(true);
   const activeStreamIdRef = useRef<string | null>(null);
   const pendingInputIdRef = useRef<string>("");
+  const terminalRefreshTimerIdsRef = useRef<number[]>([]);
   const disposedRef = useRef(false);
 
   const workspaceUnavailable = workspace.folder_state === "missing";
@@ -401,6 +301,13 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     await window.electronAPI.workspace
       .closeSessionOutputStream(streamId, reason)
       .catch(() => undefined);
+  }, []);
+
+  const clearScheduledTerminalRefreshes = useCallback(() => {
+    for (const timerId of terminalRefreshTimerIdsRef.current) {
+      window.clearTimeout(timerId);
+    }
+    terminalRefreshTimerIdsRef.current = [];
   }, []);
 
   const openLiveStream = useCallback(
@@ -446,7 +353,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       );
       const session = ensured.session;
       const sessionId = session.session_id.trim();
-      const [history, runtimeStates, outputsResponse] = await Promise.all([
+      const [history, runtimeStates] = await Promise.all([
         window.electronAPI.workspace.getSessionHistory({
           workspaceId,
           sessionId,
@@ -455,12 +362,6 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           order: "desc",
         }),
         window.electronAPI.workspace.listRuntimeStates(workspaceId),
-        window.electronAPI.workspace.listOutputs({
-          workspaceId,
-          sessionId,
-          limit: PREVIEW_OUTPUT_LIMIT,
-          offset: 0,
-        }),
       ]);
       if (disposedRef.current) {
         return;
@@ -470,15 +371,64 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         history.messages,
         "desc",
       );
-      const previewInputIds = new Set(
-        turnInputIdsFromHistoryMessages(historyMessages),
+      const previewInputIds = turnInputIdsFromHistoryMessages(historyMessages);
+      const previewArtifacts =
+        previewInputIds.length > 0
+          ? await Promise.all(
+              previewInputIds.map(async (inputId) => {
+                const [
+                  outputEventsResult,
+                  outputListResult,
+                  memoryProposalListResult,
+                ] = await Promise.allSettled([
+                  window.electronAPI.workspace.getSessionOutputEvents({
+                    sessionId,
+                    inputId,
+                  }),
+                  window.electronAPI.workspace.listOutputs({
+                    workspaceId,
+                    sessionId,
+                    inputId,
+                    limit: PREVIEW_OUTPUT_LIMIT,
+                  }),
+                  window.electronAPI.workspace.listMemoryUpdateProposals({
+                    workspaceId,
+                    sessionId,
+                    inputId,
+                    limit: PREVIEW_OUTPUT_LIMIT,
+                  }),
+                ]);
+                return {
+                  outputEvents:
+                    outputEventsResult.status === "fulfilled"
+                      ? outputEventsResult.value.items
+                      : [],
+                  outputs:
+                    outputListResult.status === "fulfilled"
+                      ? outputListResult.value.items
+                      : [],
+                  memoryProposals:
+                    memoryProposalListResult.status === "fulfilled"
+                      ? memoryProposalListResult.value.proposals
+                      : [],
+                };
+              }),
+            )
+          : [];
+      if (disposedRef.current) {
+        return;
+      }
+      const nextMessages = trimPreviewMessages(
+        chatMessagesFromSessionState({
+          historyMessages,
+          outputEvents: previewArtifacts.flatMap((entry) => entry.outputEvents),
+          outputs: previewArtifacts.flatMap((entry) => entry.outputs),
+          memoryProposals: previewArtifacts.flatMap(
+            (entry) => entry.memoryProposals,
+          ),
+          showExecutionInternals: false,
+        }) as PreviewChatMessage[],
       );
-      const nextMessages = previewMessagesFromSessionState({
-        historyMessages,
-        outputs: outputsResponse.items.filter((output) =>
-          previewInputIds.has((output.input_id || "").trim()),
-        ),
-      });
       const nextRuntimeState =
         runtimeStates.items.find((item) => item.session_id === sessionId) ??
         null;
@@ -490,6 +440,14 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       setRuntimeCardState(nextRuntimeCardState);
       setIsResponding(
         nextRuntimeCardState === "queued" || nextRuntimeCardState === "working",
+      );
+      setLiveAssistantText("");
+      setLiveAgentStatus(
+        nextRuntimeCardState === "queued"
+          ? "Queued"
+          : nextRuntimeCardState === "working"
+            ? "Working"
+            : "",
       );
       setErrorMessage("");
 
@@ -518,6 +476,21 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     [closeActiveStream, openLiveStream, workspaceId],
   );
 
+  const scheduleTerminalRefresh = useCallback(() => {
+    clearScheduledTerminalRefreshes();
+    for (const delayMs of CONTROL_CENTER_TERMINAL_REFRESH_DELAYS_MS) {
+      const timerId = window.setTimeout(() => {
+        terminalRefreshTimerIdsRef.current =
+          terminalRefreshTimerIdsRef.current.filter((id) => id !== timerId);
+        if (disposedRef.current) {
+          return;
+        }
+        void refreshSnapshot({ attachStream: false }).catch(() => undefined);
+      }, delayMs);
+      terminalRefreshTimerIdsRef.current.push(timerId);
+    }
+  }, [clearScheduledTerminalRefreshes, refreshSnapshot]);
+
   useEffect(() => {
     disposedRef.current = false;
     void refreshSnapshot({ attachStream: true, showLoading: true }).catch(
@@ -536,9 +509,10 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
 
     return () => {
       disposedRef.current = true;
+      clearScheduledTerminalRefreshes();
       void closeActiveStream("control_center_card_unmounted");
     };
-  }, [closeActiveStream, refreshSnapshot]);
+  }, [clearScheduledTerminalRefreshes, closeActiveStream, refreshSnapshot]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
@@ -562,6 +536,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           pendingInputIdRef.current = "";
           setIsResponding(false);
           void refreshSnapshot({ attachStream: false }).catch(() => undefined);
+          scheduleTerminalRefresh();
           return;
         }
 
@@ -586,8 +561,11 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           eventType === "run_started" ||
           eventType === "compaction_restored"
         ) {
+          clearScheduledTerminalRefreshes();
           setIsResponding(true);
           setRuntimeCardState("working");
+          setLiveAssistantText("");
+          setLiveAgentStatus("Checking workspace context");
           return;
         }
 
@@ -597,32 +575,11 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           if (!delta) {
             return;
           }
-          const optimisticAssistantId = inputId
-            ? `assistant-${inputId}`
-            : `assistant-live-${payload.streamId}`;
           setIsResponding(true);
           setRuntimeCardState("working");
+          setLiveAgentStatus("");
           setErrorMessage("");
-          setMessages((current) => {
-            const next = [...current];
-            const existingIndex = next.findIndex(
-              (message) => message.id === optimisticAssistantId,
-            );
-            if (existingIndex >= 0) {
-              next[existingIndex] = {
-                ...next[existingIndex],
-                text: `${next[existingIndex]?.text || ""}${delta}`,
-              };
-            } else {
-              next.push({
-                id: optimisticAssistantId,
-                role: "assistant",
-                text: delta,
-                createdAt: new Date().toISOString(),
-              });
-            }
-            return trimPreviewMessages(next);
-          });
+          setLiveAssistantText((current) => `${current}${delta}`);
           return;
         }
 
@@ -631,8 +588,11 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           pendingInputIdRef.current = "";
           setIsResponding(false);
           setRuntimeCardState("error");
+          setLiveAssistantText("");
+          setLiveAgentStatus("");
           setErrorMessage(runFailedDetail(eventPayload));
           void refreshSnapshot({ attachStream: false }).catch(() => undefined);
+          scheduleTerminalRefresh();
           return;
         }
 
@@ -641,7 +601,10 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           pendingInputIdRef.current = "";
           setIsResponding(false);
           setRuntimeCardState("idle");
+          setLiveAssistantText("");
+          setLiveAgentStatus("");
           void refreshSnapshot({ attachStream: false }).catch(() => undefined);
+          scheduleTerminalRefresh();
         }
       },
     );
@@ -649,7 +612,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     return () => {
       unsubscribe();
     };
-  }, [refreshSnapshot]);
+  }, [clearScheduledTerminalRefreshes, refreshSnapshot, scheduleTerminalRefresh]);
 
   useEffect(() => {
     if (!isResponding || !mainSession?.session_id) {
@@ -688,7 +651,10 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
           await closeActiveStream("control_center_runtime_terminal");
         }
         setIsResponding(false);
+        setLiveAssistantText("");
+        setLiveAgentStatus("");
         void refreshSnapshot({ attachStream: false }).catch(() => undefined);
+        scheduleTerminalRefresh();
       } catch {
         // Ignore poll failures; the stream remains the primary signal.
       } finally {
@@ -705,7 +671,14 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [closeActiveStream, isResponding, mainSession, refreshSnapshot, workspaceId]);
+  }, [
+    closeActiveStream,
+    isResponding,
+    mainSession,
+    refreshSnapshot,
+    scheduleTerminalRefresh,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     const scroller = previewScrollerRef.current;
@@ -713,7 +686,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       return;
     }
     scroller.scrollTop = scroller.scrollHeight;
-  }, [messages]);
+  }, [liveAssistantText, messages]);
 
   const handlePreviewScroll = () => {
     const scroller = previewScrollerRef.current;
@@ -735,6 +708,9 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     setErrorMessage("");
     setIsSubmitting(true);
     setComposerText("");
+    setLiveAssistantText("");
+    setLiveAgentStatus("");
+    clearScheduledTerminalRefreshes();
     onSelectWorkspace(workspaceId);
     setMessages((current) =>
       trimPreviewMessages([
@@ -761,6 +737,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       if (disposedRef.current) {
         return;
       }
+      clearScheduledTerminalRefreshes();
       pendingInputIdRef.current = queued.input_id;
       setMessages((current) =>
         current.map((message) =>
@@ -774,6 +751,10 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         ),
       );
       setIsResponding(true);
+      setLiveAssistantText("");
+      setLiveAgentStatus(
+        queued.status.trim().toUpperCase() === "QUEUED" ? "Queued" : "Working",
+      );
       setRuntimeCardState(
         queued.status.trim().toUpperCase() === "QUEUED" ? "queued" : "working",
       );
@@ -808,6 +789,18 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     event.preventDefault();
     void handleSubmit();
   };
+  const liveAssistantTurn =
+    isResponding || Boolean(liveAssistantText.trim())
+      ? {
+          text: liveAssistantText,
+          tone: "default" as const,
+          segments: [],
+          executionItems: [],
+          status: liveAgentStatus || (isResponding ? "Working" : ""),
+        }
+      : null;
+  const showPreviewConversation =
+    messages.length > 0 || Boolean(liveAssistantTurn);
 
   return (
     <Card
@@ -839,17 +832,14 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
             <span className="text-[10px] text-muted-foreground">
               {formatLastActivityLabel(lastActivityAt)}
             </span>
-            <Badge
-              variant={previewStatusVariant(runtimeCardState)}
-              className="h-6 rounded-full px-2 text-[11px]"
-            >
-              {runtimeCardState === "working" ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : runtimeCardState === "queued" ? (
-                <Sparkles className="size-3" />
-              ) : null}
-              {previewStatusLabel(runtimeCardState)}
-            </Badge>
+            {runtimeCardState !== "working" && runtimeCardState !== "queued" ? (
+              <Badge
+                variant={previewStatusVariant(runtimeCardState)}
+                className="h-6 rounded-full px-2 text-[11px]"
+              >
+                {previewStatusLabel(runtimeCardState)}
+              </Badge>
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
@@ -874,67 +864,32 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
               <Loader2 className="mr-2 size-3.5 animate-spin" />
               Loading main session
             </div>
-          ) : messages.length > 0 ? (
+          ) : showPreviewConversation ? (
             <div className="space-y-2.5">
-              {messages.map((message, index) =>
-                message.role === "user" ? (
-                  <div
-                    key={message.id}
-                    className={cn(message.optimistic ? "opacity-80" : "")}
-                  >
-                    <UserTurn
-                      text={message.text}
-                      createdAt={message.createdAt}
-                      attachments={message.attachments ?? []}
-                      onLinkClick={handleOpenExternalUrl}
-                    />
-                  </div>
-                ) : (
-                  <div
-                    key={message.id}
-                    className={cn(message.optimistic ? "opacity-80" : "")}
-                  >
-                    <AssistantTurn
-                      label={workspace.name}
-                      mode="control_center_preview"
-                      showSeparator={index > 0}
-                      showExecutionInternals={false}
-                      text={message.text}
-                      tone={message.tone ?? "default"}
-                      segments={message.segments ?? []}
-                      executionItems={message.executionItems ?? []}
-                      memoryProposals={[]}
-                      outputs={message.outputs ?? []}
-                      memoryProposalAction={null}
-                      editingMemoryProposalId={null}
-                      memoryProposalDrafts={{}}
-                      onEditMemoryProposal={(_proposalId) => undefined}
-                      onMemoryProposalDraftChange={(_proposalId, _value) =>
-                        undefined
-                      }
-                      onAcceptMemoryProposal={(_proposal) => undefined}
-                      onDismissMemoryProposal={(_proposal) => undefined}
-                      onOpenOutput={(output) =>
-                        onOpenOutput(workspaceId, output)
-                      }
-                      onOpenAllArtifacts={handleOpenArtifacts}
-                      collapsedTraceByStepId={{}}
-                      onToggleTraceStep={(_stepId) => undefined}
-                      onLinkClick={handleOpenExternalUrl}
-                      status={
-                        isResponding && index === messages.length - 1
-                          ? "Working"
-                          : ""
-                      }
-                      live={
-                        isResponding &&
-                        index === messages.length - 1 &&
-                        !message.outputs?.length
-                      }
-                    />
-                  </div>
-                ),
-              )}
+              <ConversationTurns
+                messages={messages}
+                assistantLabel={workspace.name}
+                assistantMode="control_center_preview"
+                showExecutionInternals={false}
+                onOpenOutput={(output) => onOpenOutput(workspaceId, output)}
+                onOpenAllArtifacts={handleOpenArtifacts}
+                collapsedTraceByStepId={{}}
+                onToggleTraceStep={(_stepId) => undefined}
+                onLinkClick={handleOpenExternalUrl}
+                memoryProposalAction={null}
+                editingMemoryProposalId={null}
+                memoryProposalDrafts={{}}
+                onEditMemoryProposal={(_message, _proposalId) => undefined}
+                onMemoryProposalDraftChange={(_proposalId, _value) =>
+                  undefined
+                }
+                onAcceptMemoryProposal={(_proposal) => undefined}
+                onDismissMemoryProposal={(_proposal) => undefined}
+                getMessageWrapperClassName={(message) =>
+                  cn(message.optimistic ? "opacity-80" : "")
+                }
+                liveAssistantTurn={liveAssistantTurn}
+              />
             </div>
           ) : (
             <div className="flex h-full items-center justify-center text-center text-xs text-muted-foreground">
