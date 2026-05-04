@@ -1141,12 +1141,13 @@ webview {
 }
 
 .chat-assistant-markdown .md-p {
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .chat-assistant-markdown .md-ul,
 .chat-assistant-markdown .md-ol {
-  margin: 14px 0;
+  margin: 12px 0;
+  padding-left: 1.25rem;
 }
 
 .chat-assistant-markdown .md-li,
@@ -1155,35 +1156,35 @@ webview {
 }
 
 .chat-assistant-markdown .md-h1 {
-  font-size: 1.45em;
-  font-weight: var(--font-weight-black);
+  font-size: 1rem;
+  font-weight: var(--font-weight-bold);
   line-height: 1.35;
-  margin-top: 1.6em;
-  margin-bottom: 0.6em;
+  margin-top: 18px;
+  margin-bottom: 10px;
 }
 
 .chat-assistant-markdown .md-h2 {
-  font-size: 1.25em;
-  font-weight: var(--font-weight-black);
+  font-size: 1rem;
+  font-weight: var(--font-weight-semibold);
   line-height: 1.4;
-  margin-top: 1.5em;
-  margin-bottom: 0.5em;
+  margin-top: 16px;
+  margin-bottom: 8px;
 }
 
 .chat-assistant-markdown .md-h3 {
-  font-size: 1.1em;
-  font-weight: var(--font-weight-black);
+  font-size: 0.9375rem;
+  font-weight: var(--font-weight-semibold);
   line-height: 1.45;
-  margin-top: 1.3em;
-  margin-bottom: 0.4em;
+  margin-top: 14px;
+  margin-bottom: 6px;
 }
 
 .chat-assistant-markdown .md-h4 {
-  font-size: 1em;
-  font-weight: var(--font-weight-black);
+  font-size: 0.875rem;
+  font-weight: var(--font-weight-semibold);
   line-height: 1.5;
-  margin-top: 1.1em;
-  margin-bottom: 0.35em;
+  margin-top: 12px;
+  margin-bottom: 4px;
 }
 
 .chat-assistant-markdown .md-h1:first-child,
@@ -1236,11 +1237,11 @@ webview {
 }
 
 .chat-assistant-markdown .md-blockquote {
-  border-left: 2px solid color-mix(in oklch, var(--foreground) 25%, transparent);
-  padding: 0.35em 0 0.35em 1em;
-  margin: 1em 0;
-  color: color-mix(in oklch, var(--foreground) 75%, transparent);
-  font-weight: var(--font-weight-bold);
+  border-left: 2px solid color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+  padding: 0.25em 0 0.25em 0.75em;
+  margin: 12px 0;
+  color: var(--muted-foreground);
+  font-style: italic;
 }
 
 .chat-thinking-markdown {
@@ -1334,6 +1335,7 @@ webview {
 .chat-markdown .md-ul,
 .chat-markdown .md-ol {
   margin: 10px 0;
+  padding-left: 1.25rem;
 }
 
 .chat-markdown .md-li,
@@ -1345,7 +1347,7 @@ webview {
   margin: 10px 0;
   background: color-mix(in oklch, var(--input) 78%, var(--background) 22%);
   border: 1px solid color-mix(in oklch, var(--border) 74%, transparent);
-  border-radius: 14px;
+  border-radius: 8px;
   box-shadow: var(--shadow-subtle-xs);
   color: color-mix(in oklch, var(--foreground) 94%, transparent);
   font-size: 0.725rem;

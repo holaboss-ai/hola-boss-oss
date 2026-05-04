@@ -7861,7 +7861,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             </div>
           ) : null}
           <div
-            className="relative min-h-0 flex-1 overflow-hidden"
+            className="group/chat-scroll relative min-h-0 flex-1 overflow-hidden"
             style={{
               maskImage: chatScrollMaskImage(),
               WebkitMaskImage: chatScrollMaskImage(),
@@ -7893,7 +7893,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className={`flex min-w-0 w-full flex-col gap-4 px-4 pb-3 pt-5 ${
+                  className={`flex min-w-0 w-full flex-col gap-4 pl-4 pr-7 pb-3 pt-5 ${
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
                 >
@@ -8116,7 +8116,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             </div>
 
             {showCustomChatScrollbar ? (
-              <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
+              <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4 opacity-0 transition-opacity duration-200 group-hover/chat-scroll:opacity-100">
                 <div
                   className="pointer-events-auto absolute inset-x-0 touch-none"
                   style={{
@@ -8512,7 +8512,7 @@ function UserTurn({
           </div>
         ) : null}
         {userBubbleText ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-2xl px-5 py-3.5 text-foreground">
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-lg px-3 py-1.5 text-foreground">
             <div
               ref={bubbleContentRef}
               className="relative overflow-hidden transition-[max-height] duration-300 ease-out"
@@ -9028,9 +9028,9 @@ function AssistantTurn({
 
   return (
     <div
-      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-6" : ""}`.trim()}
+      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-4" : ""}`.trim()}
     >
-      <article className="min-w-0 w-full max-w-4xl">
+      <article className="min-w-0 w-full max-w-4xl rounded-lg bg-muted/60 px-3 py-2">
         {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
         {renderedSegments.map((segment, index) =>
