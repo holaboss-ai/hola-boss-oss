@@ -8139,7 +8139,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             {hasMessages && isAwayFromChatBottom ? (
               <button
                 aria-label="Jump to latest message"
-                className="absolute bottom-3 left-1/2 z-30 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-foreground shadow-subtle-sm transition-colors hover:bg-muted animate-in fade-in-0 slide-in-from-bottom-1 duration-150"
+                className="absolute bottom-3 left-1/2 z-30 grid size-8 -translate-x-1/2 place-items-center rounded-full border border-border bg-background text-foreground shadow-subtle-sm transition-colors hover:bg-muted animate-in fade-in-0 slide-in-from-bottom-1 duration-150"
                 onClick={() => {
                   const container = messagesRef.current;
                   if (!container) return;
@@ -8151,8 +8151,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                 }}
                 type="button"
               >
-                <ChevronDown className="size-3.5" />
-                Jump to latest
+                <ChevronDown className="size-4" />
               </button>
             ) : null}
 
