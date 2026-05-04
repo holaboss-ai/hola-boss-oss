@@ -3269,6 +3269,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const skipNextComposerDraftPublishRef = useRef(false);
   const liveAssistantSegmentsRef = useRef<ChatAssistantSegment[]>([]);
   const liveAssistantTextRef = useRef("");
+  const liveAssistantFlushFrameRef = useRef<number | null>(null);
   const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
   const historyViewportGenerationRef = useRef(0);
   const [activeSessionId, setActiveSessionId] = useState("");
@@ -3507,6 +3508,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   }
 
   function resetLiveTurn() {
+    cancelLiveAssistantFlush();
     liveAssistantSegmentsRef.current = [];
     liveAssistantTextRef.current = "";
     liveExecutionItemsRef.current = [];
@@ -4227,6 +4229,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     if (!liveAssistantTextRef.current) {
       return;
     }
+    cancelLiveAssistantFlush();
     flushSync(() => {
       setLiveAssistantSegmentsState(
         appendAssistantOutputSegment(
@@ -4256,15 +4259,25 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     });
   }
 
+  function cancelLiveAssistantFlush() {
+    if (liveAssistantFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(liveAssistantFlushFrameRef.current);
+      liveAssistantFlushFrameRef.current = null;
+    }
+  }
+
+  function scheduleLiveAssistantFlush() {
+    if (liveAssistantFlushFrameRef.current !== null) return;
+    liveAssistantFlushFrameRef.current = window.requestAnimationFrame(() => {
+      liveAssistantFlushFrameRef.current = null;
+      setLiveAssistantText(liveAssistantTextRef.current);
+    });
+  }
+
   function appendLiveAssistantDelta(delta: string) {
     flushLiveExecutionSegment();
-    flushSync(() => {
-      setLiveAssistantText((prev) => {
-        const next = `${prev}${delta}`;
-        liveAssistantTextRef.current = next;
-        return next;
-      });
-    });
+    liveAssistantTextRef.current = `${liveAssistantTextRef.current}${delta}`;
+    scheduleLiveAssistantFlush();
   }
 
   function appendLiveThinkingDelta(delta: string, order: number) {
@@ -5765,6 +5778,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
 
   useEffect(() => {
     return () => {
+      cancelLiveAssistantFlush();
       const activeStreamId = activeStreamIdRef.current;
       if (activeStreamId) {
         void closeStreamWithReason(activeStreamId, "chatpane_unmount");
