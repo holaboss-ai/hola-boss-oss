@@ -8497,7 +8497,7 @@ function UserTurn({
 
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
-      <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-1 sm:max-w-[560px] lg:max-w-[680px]">
+      <div className="flex min-w-0 max-w-[80%] flex-col items-end gap-2">
         {parsedQuotedSkills.skillIds.length > 0 ? (
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             {parsedQuotedSkills.skillIds.map((skillId) => (
@@ -8512,7 +8512,7 @@ function UserTurn({
           </div>
         ) : null}
         {userBubbleText ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-2xl px-[18px] py-2.5 text-foreground">
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-2xl px-5 py-3.5 text-foreground">
             <div
               ref={bubbleContentRef}
               className="relative overflow-hidden transition-[max-height] duration-300 ease-out"
@@ -8782,12 +8782,6 @@ function QueuedSessionInputRail({
   );
 }
 
-/**
- * True when the agent invoked any filesystem-mutating tool inside this
- * turn's execution items. Drives whether the per-turn actions menu offers
- * "View file changes" — if no Edit / Write / patch happened, the menu
- * entry is hidden so users aren't taught a useless affordance.
- */
 function executionItemsHaveFileEdits(
   items: ChatExecutionTimelineItem[],
 ): boolean {
@@ -8799,10 +8793,6 @@ function executionItemsHaveFileEdits(
       return false;
     }
     const title = item.step.title.toLowerCase();
-    // Tool names exposed to the user surface as "Edit"/"Write"/"Patch"/
-    // "Replace"/"MultiEdit". Match by lowercase substring rather than
-    // exact equality because titles often include the file path
-    // ("Write README.md", "Edit src/foo.ts").
     return (
       title.startsWith("edit") ||
       title.startsWith("write") ||
@@ -8816,29 +8806,12 @@ function executionItemsHaveFileEdits(
 }
 
 interface AssistantTurnActionsMenuProps {
-  /** Plain-text content the user gets when clicking Copy. */
   copyText: string;
-  /**
-   * Triggered when the user picks "View turn details". Optional — when
-   * not provided the entry is hidden. Implementation typically expands
-   * the trace group + scrolls it into view.
-   */
   onViewTurnDetails?: () => void;
-  /**
-   * Triggered when the user picks "View file changes". Optional + only
-   * meaningful when the turn invoked file-mutating tools.
-   */
   onViewFileChanges?: () => void;
-  /** When true, render the file-changes entry even without a callback. */
   hasFileEdits?: boolean;
 }
 
-/**
- * Per-assistant-turn 3-dot menu shown on hover. Mirrors the user-side
- * copy affordance so both speakers get parity. The menu is intentionally
- * narrow (Copy + maybe one or two domain actions) — adding more makes
- * the chat surface noisy on every turn.
- */
 function AssistantTurnActionsMenu({
   copyText,
   onViewTurnDetails,
@@ -8856,16 +8829,13 @@ function AssistantTurnActionsMenu({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Some embedded WebContents block clipboard from non-user-gesture
-      // contexts. Silent — the menu item exists for the gesture path.
+      // ignore
     }
   }
 
   const showFileChanges = Boolean(onViewFileChanges) && Boolean(hasFileEdits);
   const canCopy = copyText.trim().length > 0;
 
-  // Nothing to show — don't render an empty trigger that just confuses
-  // users when they hover and the menu is empty.
   if (!canCopy && !onViewTurnDetails && !showFileChanges) {
     return null;
   }
@@ -9015,15 +8985,11 @@ function AssistantTurn({
   const showWorkingStatusLine =
     live && showExecutionInternals && renderedSegments.length > 0;
 
-  // Bumped by the per-turn actions menu's "View turn details" item; threads
-  // through every TraceStepGroup in this turn to force-expand them.
   const [forceExpandToken, setForceExpandToken] = useState(0);
   const hasFileEdits = useMemo(
     () => executionItemsHaveFileEdits(executionItems),
     [executionItems],
   );
-  // Plain-text we feed to the Copy menu item — concatenate output segments;
-  // execution segments are noise for paste targets like a doc or message.
   const copyText = useMemo(
     () =>
       renderedSegments
@@ -9062,13 +9028,9 @@ function AssistantTurn({
 
   return (
     <div
-      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-2" : ""}`.trim()}
+      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-6" : ""}`.trim()}
     >
-      <article
-        className={`min-w-0 w-full max-w-4xl ${
-          showSeparator ? "rounded-[1.75rem] bg-muted/35 px-5 py-4" : ""
-        }`.trim()}
-      >
+      <article className="min-w-0 w-full max-w-4xl">
         {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
         {renderedSegments.map((segment, index) =>
@@ -9811,9 +9773,6 @@ function LiveStatusLine({
   return (
     <div
       aria-live="polite"
-      // Keyed on the label so a status change ("Thinking" → "Editing
-      // README.md") triggers a fresh fade-in instead of an abrupt swap —
-      // makes long agent runs feel responsive instead of glitchy.
       key={normalizedLabel}
       className={`inline-flex items-baseline gap-0.5 text-xs leading-6 text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-0.5 duration-200 ease-out ${className}`.trim()}
     >
@@ -9960,11 +9919,6 @@ function TraceStepGroup({
   liveOutputStarted?: boolean;
   onLinkClick?: (url: string) => void;
   onLocalLinkClick?: (href: string) => void;
-  /**
-   * Counter the parent bumps to force the group open — used by the per-turn
-   * "View turn details" action so the user lands on a fully expanded trace
-   * even if they had previously collapsed it.
-   */
   forceExpandToken?: number;
 }) {
   const steps = traceStepsFromExecutionItems(items);
@@ -9975,9 +9929,6 @@ function TraceStepGroup({
   const previousLiveOutputStartedRef = useRef(liveOutputStarted);
   const previousForceExpandTokenRef = useRef(forceExpandToken);
 
-  // External force-expand: bump from the per-turn actions menu opens the
-  // group regardless of its previous state. Mounting at token 0 is a no-op
-  // so first paint stays governed by the live/output flow above.
   useEffect(() => {
     if (forceExpandToken !== previousForceExpandTokenRef.current) {
       previousForceExpandTokenRef.current = forceExpandToken;
@@ -10043,11 +9994,7 @@ function TraceStepGroup({
         : latestThinkingItem
           ? summarizeThinking(latestThinkingItem.text)
           : stepCount > 0 && latestStep
-            ? // Done state: surface the last action's title so a user
-              // skimming the chat sees "Edited README.md" / "Searched
-              // marketplace" instead of "Used 5 steps". Step count
-              // moves into a trailing badge.
-              latestStep.title
+            ? latestStep.title
             : "Execution trace";
 
   return (
