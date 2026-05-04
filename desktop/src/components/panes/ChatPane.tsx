@@ -8512,7 +8512,7 @@ function UserTurn({
           </div>
         ) : null}
         {userBubbleText ? (
-          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-lg px-3 py-1.5 text-foreground">
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full flex-col items-stretch rounded-2xl px-5 py-3.5 text-foreground">
             <div
               ref={bubbleContentRef}
               className="relative overflow-hidden transition-[max-height] duration-300 ease-out"
@@ -9028,9 +9028,9 @@ function AssistantTurn({
 
   return (
     <div
-      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-4" : ""}`.trim()}
+      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-6" : ""}`.trim()}
     >
-      <article className="min-w-0 w-full max-w-4xl rounded-lg bg-muted/60 px-3 py-2">
+      <article className="min-w-0 w-full max-w-4xl">
         {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
         {renderedSegments.map((segment, index) =>
