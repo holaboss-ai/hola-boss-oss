@@ -1,22 +1,12 @@
 import { Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+
 import { Button } from "@/components/ui/button";
 import { providerDisplayName, providerIcon } from "./constants";
-
-function ProviderLabel({ provider, logoUrl }: { provider: string; logoUrl?: string }) {
-  return (
-    <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
-      {logoUrl ? (
-        <img src={logoUrl} alt="" width={20} height={20} className="shrink-0 rounded" />
-      ) : (
-        providerIcon(provider, 20)
-      )}
-      {providerDisplayName(provider)}
-    </span>
-  );
-}
+import { WorkspaceWizardLayout } from "./WorkspaceWizardLayout";
 
 interface ConnectIntegrationsStepProps {
+  stepIndex: number;
+  stepTotal: number;
   pendingIntegrations: ResolveTemplateIntegrationsResult;
   connectingProvider: string | null;
   connectStatus: string;
@@ -25,6 +15,8 @@ interface ConnectIntegrationsStepProps {
 }
 
 export function ConnectIntegrationsStep({
+  stepIndex,
+  stepTotal,
   pendingIntegrations,
   connectingProvider,
   connectStatus,
@@ -32,78 +24,120 @@ export function ConnectIntegrationsStep({
   onBack,
 }: ConnectIntegrationsStepProps) {
   const logos = pendingIntegrations.provider_logos ?? {};
+  const allConnected = pendingIntegrations.missing_providers.length === 0;
 
   return (
-    <div>
-      <div className="max-w-3xl">
-        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-          Connect integrations
-        </p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-          This workspace needs access
-        </h1>
-        <p className="mt-2 text-sm leading-7 text-muted-foreground">
-          Connect the following accounts to continue.
-        </p>
-      </div>
-
-      <div className="mt-6 grid gap-3" style={{ maxWidth: 480 }}>
+    <WorkspaceWizardLayout
+      description="The selected template needs access to these accounts. Connect them to continue."
+      primary={{
+        label: "Continue",
+        onClick: onBack,
+        disabled: !allConnected,
+      }}
+      secondary={{ label: "Back", onClick: onBack }}
+      stepIndex={stepIndex}
+      stepTotal={stepTotal}
+      title="Connect your accounts"
+      width="md"
+    >
+      <div className="space-y-1.5">
         {pendingIntegrations.missing_providers.map((provider) => (
-          <div
+          <ProviderRow
+            connected={false}
+            connecting={connectingProvider === provider}
+            disabled={connectingProvider !== null}
             key={provider}
-            className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-5 py-4"
-          >
-            <ProviderLabel provider={provider} logoUrl={logos[provider]} />
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={connectingProvider !== null}
-              onClick={() => onConnect(provider)}
-            >
-              {connectingProvider === provider ? (
-                <>
-                  <Loader2 size={12} className="animate-spin" />
-                  Connecting...
-                </>
-              ) : (
-                "Connect"
-              )}
-            </Button>
-          </div>
+            logoUrl={logos[provider]}
+            onAction={() => onConnect(provider)}
+            provider={provider}
+          />
         ))}
         {pendingIntegrations.connected_providers.map((provider) => (
-          <div
+          <ProviderRow
+            connected
+            connecting={connectingProvider === provider}
+            disabled={connectingProvider !== null}
             key={provider}
-            className="flex items-center justify-between rounded-xl border border-primary/20 bg-primary/5 px-5 py-4"
-          >
-            <ProviderLabel provider={provider} logoUrl={logos[provider]} />
-            <div className="flex items-center gap-3">
-              <Badge variant="outline" className="border-primary/25 text-primary">
-                Connected
-              </Badge>
-              <Button
-                variant="link"
-                size="xs"
-                disabled={connectingProvider !== null}
-                onClick={() => onConnect(provider)}
-                className="text-muted-foreground"
-              >
-                {connectingProvider === provider ? "Reconnecting..." : "Reconnect"}
-              </Button>
-            </div>
-          </div>
+            logoUrl={logos[provider]}
+            onAction={() => onConnect(provider)}
+            provider={provider}
+          />
         ))}
       </div>
-
       {connectStatus ? (
-        <p className="mt-4 text-sm text-muted-foreground">{connectStatus}</p>
+        <p className="mt-4 text-xs text-muted-foreground">{connectStatus}</p>
       ) : null}
+    </WorkspaceWizardLayout>
+  );
+}
 
-      <div className="mt-5">
-        <Button variant="link" size="sm" onClick={onBack} className="text-muted-foreground">
-          &larr; Back to configure
-        </Button>
+function ProviderRow({
+  provider,
+  logoUrl,
+  connected,
+  connecting,
+  disabled,
+  onAction,
+}: {
+  provider: string;
+  logoUrl?: string;
+  connected: boolean;
+  connecting: boolean;
+  disabled: boolean;
+  onAction: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg bg-fg-2 px-3.5 py-3 shadow-subtle-xs">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-background shadow-subtle-xs">
+        {logoUrl ? (
+          <img
+            alt=""
+            className="size-5 rounded-sm"
+            height={20}
+            src={logoUrl}
+            width={20}
+          />
+        ) : (
+          providerIcon(provider, 20)
+        )}
       </div>
+      <span className="flex-1 truncate text-sm font-medium text-foreground">
+        {providerDisplayName(provider)}
+      </span>
+      {connected ? (
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="size-1.5 rounded-full bg-success" />
+            Connected
+          </span>
+          <Button
+            disabled={disabled}
+            onClick={onAction}
+            size="xs"
+            type="button"
+            variant="link"
+          >
+            {connecting ? "Reconnecting…" : "Reconnect"}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          className="shrink-0"
+          disabled={disabled}
+          onClick={onAction}
+          size="sm"
+          type="button"
+        >
+          {connecting ? (
+            <>
+              <Loader2 className="size-3 animate-spin" />
+              Connecting…
+            </>
+          ) : (
+            "Connect"
+          )}
+        </Button>
+      )}
     </div>
   );
 }

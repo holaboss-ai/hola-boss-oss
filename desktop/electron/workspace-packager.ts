@@ -48,11 +48,32 @@ const GLOBAL_IGNORE_GLOB_PATTERNS: RegExp[] = [
   /\.log$/,
   /\.DS_Store$/,
   /\.sqlite$/,
-  // data/*.db
+  /\.sqlite-journal$/,
+  /\.sqlite-wal$/,
+  /\.sqlite-shm$/,
+  // data/*.db and any */state/*.db (workspace runtime state)
   /^data\/[^/]+\.db$/,
+  /(^|\/)state\/[^/]+\.(db|db-journal|db-wal|db-shm)$/,
+  // user personal memory files — never bundled into a published template
+  /^memory(\/|$)/,
   // automations.yaml is always written fresh by the packager
   /^automations\.yaml$/,
 ];
+
+/**
+ * Privacy-classification reason for excluded files.
+ * Used by the bundle preview UI to explain *why* something was excluded.
+ */
+export type ExclusionReason =
+  | "personal_memory"
+  | "runtime_state"
+  | "credential"
+  | "ignored_dir"
+  | "build_artifact"
+  | "hbignore"
+  | "unselected_app"
+  | "system_file"
+  | "user_excluded";
 
 const SENSITIVE_PATTERNS: RegExp[] = [
   /\.pem$/i,
@@ -126,6 +147,13 @@ export interface PackageWorkspaceParams {
   manifest: Record<string, unknown>;
   runtimeBaseUrl: string;
   workspaceId: string;
+  /**
+   * Per-publish user opt-out list, one entry per workspace-relative path.
+   * Drops files/subtrees the user unchecked in the bundle file tree.
+   * Layered AFTER the existing ignore + sensitive checks, so it can only
+   * remove otherwise-includeable files — never re-include excluded ones.
+   */
+  forceExcludePaths?: string[];
   /** Test hook */
   automationsFetcher?: typeof fetchAndSerializeAutomations;
 }
@@ -283,12 +311,37 @@ export function buildPresignedUploadError(
 }
 
 /**
+ * Match a relative path against a user force-exclude list. A path matches
+ * when it's identical to an entry, or when an entry names a parent directory
+ * (so unchecking ``skills/`` excludes ``skills/foo.md`` and the whole subtree).
+ */
+function isUserForceExcluded(relPath: string, forceExcludePaths: string[]): boolean {
+  if (forceExcludePaths.length === 0) {
+    return false;
+  }
+  for (const raw of forceExcludePaths) {
+    const entry = raw.replace(/\/+$/, "");
+    if (!entry) {
+      continue;
+    }
+    if (relPath === entry) {
+      return true;
+    }
+    if (relPath.startsWith(`${entry}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Determine whether a file should be included in the archive.
  */
 function shouldInclude(
   relPath: string,
   selectedApps: string[],
-  hbPatterns: string[]
+  hbPatterns: string[],
+  forceExcludePaths: string[]
 ): boolean {
   if (isGloballyIgnored(relPath)) {
     return false;
@@ -300,17 +353,22 @@ function shouldInclude(
     return false;
   }
 
-  // Apps filtering: if selectedApps is non-empty, only allow apps/{selected}/**
-  // Non-apps paths always pass through.
-  if (selectedApps.length > 0) {
-    const appsPrefix = "apps/";
-    if (relPath.startsWith(appsPrefix)) {
-      const rest = relPath.slice(appsPrefix.length);
-      const appName = rest.split("/")[0];
-      if (!selectedApps.includes(appName)) {
-        return false;
-      }
-    }
+  // Apps are NEVER included in the publish archive — the manifest's apps[]
+  // (NAMES only) is the source of truth, and the install-time runtime fetches
+  // each app's bytes from its official GitHub release tarball. Shipping the
+  // publisher's locally-built source/dist would cause cross-platform breakage
+  // on the installer's machine (different OS, arch, node version, etc.). The
+  // `selectedApps` parameter still controls which app NAMES end up in the
+  // manifest; it just doesn't influence file inclusion anymore.
+  if (relPath === "apps" || relPath.startsWith("apps/")) {
+    return false;
+  }
+
+  // User opt-out via the publish file tree. Layered AFTER the safety nets
+  // above so users can only DROP otherwise-includeable files; they cannot
+  // re-include credentials/.hbignore/apps via this list.
+  if (isUserForceExcluded(relPath, forceExcludePaths)) {
+    return false;
   }
 
   return true;
@@ -329,7 +387,8 @@ async function collectFiles(
   dir: string,
   baseDir: string,
   selectedApps: string[],
-  hbPatterns: string[]
+  hbPatterns: string[],
+  forceExcludePaths: string[]
 ): Promise<string[]> {
   const results: string[] = [];
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -348,28 +407,173 @@ async function collectFiles(
       if (GLOBAL_IGNORE_DIR_NAMES.has(entry.name)) {
         continue;
       }
-      // For apps filtering: prune non-selected app directories early
-      if (selectedApps.length > 0 && relPath.startsWith("apps/")) {
-        const appName = relPath.slice("apps/".length).split("/")[0];
-        if (appName && !selectedApps.includes(appName)) {
-          continue;
-        }
+      // Apps are never bundled into the publish archive — the manifest's
+      // apps[] list of NAMES is the install-time contract; the runtime
+      // fetches each app's bytes from its official GitHub release tarball.
+      // Skip the entire apps/ subtree at walk time (faster than per-file).
+      if (relPath === "apps" || relPath.startsWith("apps/")) {
+        continue;
       }
       const children = await collectFiles(
         absPath,
         baseDir,
         selectedApps,
-        hbPatterns
+        hbPatterns,
+        forceExcludePaths
       );
       results.push(...children);
     } else {
-      if (shouldInclude(relPath, selectedApps, hbPatterns)) {
+      if (shouldInclude(relPath, selectedApps, hbPatterns, forceExcludePaths)) {
         results.push(relPath);
       }
     }
   }
 
   return results;
+}
+
+/**
+ * File-level entry returned by `previewBundle` for the publish UI.
+ */
+export interface BundleFileEntry {
+  path: string;
+  sizeBytes: number;
+}
+
+export interface BundleExclusion {
+  path: string;
+  reason: ExclusionReason;
+  sizeBytes: number;
+}
+
+export interface BundlePreview {
+  included: BundleFileEntry[];
+  excluded: BundleExclusion[];
+  totalIncludedBytes: number;
+  totalExcludedBytes: number;
+}
+
+function classifyExclusion(
+  relPath: string,
+  hbPatterns: string[],
+  selectedApps: string[],
+  forceExcludePaths: string[],
+): ExclusionReason | null {
+  if (/^memory(\/|$)/.test(relPath)) {
+    return "personal_memory";
+  }
+  if (/(^|\/)state\/[^/]+\.(db|db-journal|db-wal|db-shm)$/.test(relPath) || /\.sqlite/.test(relPath)) {
+    return "runtime_state";
+  }
+  if (isSensitive(relPath)) {
+    return "credential";
+  }
+  const parts = relPath.split("/");
+  for (const part of parts) {
+    if (GLOBAL_IGNORE_DIR_NAMES.has(part)) {
+      // Distinguish build/cache from system dirs for nicer UI copy
+      if (part === "node_modules" || part === "dist" || part === "build" || part === ".turbo" || part === ".next") {
+        return "build_artifact";
+      }
+      return "ignored_dir";
+    }
+  }
+  if (/^\.env/.test(relPath) || /\.log$/.test(relPath) || /\.DS_Store$/.test(relPath)) {
+    return "system_file";
+  }
+  if (hbPatterns.length > 0 && isHbIgnored(relPath, hbPatterns)) {
+    return "hbignore";
+  }
+  // Apps are always excluded from the archive (installed at use-time from the
+  // official GitHub release tarball). selectedApps governs the manifest's
+  // apps[] NAMES, not file inclusion.
+  if (relPath === "apps" || relPath.startsWith("apps/")) {
+    return "unselected_app";
+  }
+  // User force-exclude is the lowest-priority reason — only applies when none
+  // of the safety-net categories above matched.
+  if (isUserForceExcluded(relPath, forceExcludePaths)) {
+    return "user_excluded";
+  }
+  return null;
+}
+
+/**
+ * Walk the workspace and classify every file as included or excluded
+ * (with reason). Used by the publish UI's bundle preview before the
+ * user commits to publishing — purely a read; no zip created.
+ */
+export async function previewBundle(
+  workspaceDir: string,
+  selectedApps: string[],
+  forceExcludePaths: string[] = [],
+): Promise<BundlePreview> {
+  const hbIgnorePath = path.join(workspaceDir, ".hbignore");
+  let hbPatterns: string[] = [];
+  if (existsSync(hbIgnorePath)) {
+    hbPatterns = parseHbIgnore(readFileSync(hbIgnorePath, "utf8"));
+  }
+
+  const included: BundleFileEntry[] = [];
+  const excluded: BundleExclusion[] = [];
+  let totalIncludedBytes = 0;
+  let totalExcludedBytes = 0;
+
+  async function walk(dir: string): Promise<void> {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      const absPath = path.join(dir, entry.name);
+      const relPath = path.relative(workspaceDir, absPath).split(path.sep).join("/");
+      if (entry.isDirectory()) {
+        // Hard-prune massive build/dep dirs without recursing
+        if (GLOBAL_IGNORE_DIR_NAMES.has(entry.name)) {
+          // Record a single rolled-up exclusion entry so the UI can show it
+          excluded.push({
+            path: relPath + "/",
+            reason:
+              classifyExclusion(relPath + "/", hbPatterns, selectedApps, forceExcludePaths) ??
+              "ignored_dir",
+            sizeBytes: 0,
+          });
+          continue;
+        }
+        await walk(absPath);
+      } else {
+        let sizeBytes = 0;
+        try {
+          const st = await fs.stat(absPath);
+          sizeBytes = Number(st.size) || 0;
+        } catch {
+          sizeBytes = 0;
+        }
+        if (shouldInclude(relPath, selectedApps, hbPatterns, forceExcludePaths)) {
+          included.push({ path: relPath, sizeBytes });
+          totalIncludedBytes += sizeBytes;
+        } else {
+          const reason =
+            classifyExclusion(relPath, hbPatterns, selectedApps, forceExcludePaths) ?? "ignored_dir";
+          excluded.push({ path: relPath, reason, sizeBytes });
+          totalExcludedBytes += sizeBytes;
+        }
+      }
+    }
+  }
+
+  await walk(workspaceDir);
+
+  return {
+    included,
+    excluded,
+    totalIncludedBytes,
+    totalExcludedBytes,
+  };
 }
 
 /**
@@ -385,6 +589,7 @@ export async function packageWorkspace(
     manifest,
     runtimeBaseUrl,
     workspaceId,
+    forceExcludePaths = [],
     automationsFetcher = fetchAndSerializeAutomations,
   } = params;
 
@@ -397,7 +602,7 @@ export async function packageWorkspace(
   }
 
   // Collect files
-  const relPaths = await collectFiles(workspaceDir, workspaceDir, apps, hbPatterns);
+  const relPaths = await collectFiles(workspaceDir, workspaceDir, apps, hbPatterns, forceExcludePaths);
 
   // Fetch automations — failures bubble up to the IPC handler
   const automations = await automationsFetcher(runtimeBaseUrl, workspaceId);
@@ -444,44 +649,87 @@ export async function packageWorkspace(
   };
 }
 
+export interface UploadProgress {
+  uploadedBytes: number;
+  totalBytes: number;
+}
+
+export interface UploadOptions {
+  timeoutMs?: number;
+  onProgress?: (p: UploadProgress) => void;
+  /** Number of additional retry attempts on transient (5xx / network) failures. */
+  retries?: number;
+  /** Override Content-Type — defaults to application/zip when not in signed headers. */
+  contentType?: string;
+}
+
+const TRANSIENT_STATUS = (status: number) => status === 0 || status === 408 || status === 429 || (status >= 500 && status < 600);
+
 /**
- * PUT a Buffer to a presigned S3 URL.
+ * PUT a Buffer to a presigned URL with progress reporting and retry-on-transient.
  */
 export async function uploadToPresignedUrl(
   url: string,
   data: Buffer,
-  timeoutMs = 120_000,
+  optionsOrTimeoutMs: UploadOptions | number = {},
+): Promise<void> {
+  const opts: UploadOptions =
+    typeof optionsOrTimeoutMs === "number" ? { timeoutMs: optionsOrTimeoutMs } : optionsOrTimeoutMs;
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const maxAttempts = (opts.retries ?? 2) + 1;
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await uploadOnce(url, data, timeoutMs, opts.onProgress, opts.contentType);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const message = err instanceof Error ? err.message : String(err);
+      const statusMatch = message.match(/status (\d+)/);
+      const status = statusMatch ? Number(statusMatch[1]) : 0;
+      const isLastAttempt = attempt === maxAttempts;
+      const transient = TRANSIENT_STATUS(status) || /timed out|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/i.test(message);
+      if (isLastAttempt || !transient) {
+        throw err;
+      }
+      // exponential backoff: 500ms, 1500ms, 3500ms, ...
+      const backoff = 500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("upload failed");
+}
+
+function uploadOnce(
+  url: string,
+  data: Buffer,
+  timeoutMs: number,
+  onProgress: ((p: UploadProgress) => void) | undefined,
+  contentType: string | undefined,
 ): Promise<void> {
   const requester = url.startsWith("https") ? httpsRequest : httpRequest;
+  const totalBytes = data.byteLength;
+  const headers = buildPresignedUploadHeaders(url, totalBytes);
+  if (contentType) {
+    headers["Content-Type"] = contentType;
+  }
 
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const req = requester(
       url,
-      {
-        method: "PUT",
-        headers: buildPresignedUploadHeaders(url, data.byteLength),
-        timeout: timeoutMs,
-      },
+      { method: "PUT", headers, timeout: timeoutMs },
       (res: IncomingMessage) => {
         const responseChunks: string[] = [];
         res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          responseChunks.push(chunk);
-        });
+        res.on("data", (chunk) => responseChunks.push(chunk));
         res.on("end", () => {
           const status = res.statusCode ?? 0;
           if (status >= 200 && status < 300) {
+            onProgress?.({ uploadedBytes: totalBytes, totalBytes });
             resolve();
           } else {
-            reject(
-              new Error(
-                buildPresignedUploadError(
-                  url,
-                  status,
-                  responseChunks.join(""),
-                ),
-              ),
-            );
+            reject(new Error(buildPresignedUploadError(url, status, responseChunks.join(""))));
           }
         });
         res.on("error", reject);
@@ -492,7 +740,24 @@ export async function uploadToPresignedUrl(
       req.destroy(new Error(`Upload timed out after ${timeoutMs}ms`));
     });
     req.on("error", reject);
-    req.write(data);
-    req.end();
+
+    // Stream the buffer in 256 KB chunks so we can emit progress.
+    const CHUNK = 256 * 1024;
+    let offset = 0;
+    const writeNext = () => {
+      while (offset < totalBytes) {
+        const end = Math.min(offset + CHUNK, totalBytes);
+        const slice = data.subarray(offset, end);
+        const ok = req.write(slice);
+        offset = end;
+        onProgress?.({ uploadedBytes: offset, totalBytes });
+        if (!ok) {
+          req.once("drain", writeNext);
+          return;
+        }
+      }
+      req.end();
+    };
+    writeNext();
   });
 }
