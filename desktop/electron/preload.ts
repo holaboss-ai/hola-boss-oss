@@ -1178,6 +1178,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     revealBundle: (bundlePath: string) =>
       ipcRenderer.invoke("diagnostics:revealBundle", bundlePath) as Promise<boolean>,
   },
+  app: {
+    relaunch: () => ipcRenderer.invoke("app:relaunch") as Promise<void>,
+  },
   runtime: {
     getStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,
     restart: () => ipcRenderer.invoke("runtime:restart") as Promise<RuntimeStatusPayload>,

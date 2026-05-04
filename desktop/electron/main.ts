@@ -20394,6 +20394,16 @@ app.whenReady().then(async () => {
     await restartEmbeddedRuntimeSafely("manual_restart");
     return refreshRuntimeStatus();
   });
+  // Full app relaunch — heavier hammer than runtime:restart, used by error
+  // surfaces where the renderer/main may itself be in a bad state (e.g. the
+  // "Holaboss couldn't start" blocker). Electron's app.relaunch() schedules
+  // the next instance, then app.quit() exits the current one. Awaiting the
+  // IPC roundtrip is meaningless because the process is going away — the
+  // renderer just kicks it and forgets.
+  handleTrustedIpc("app:relaunch", ["main"], () => {
+    app.relaunch();
+    app.quit();
+  });
   handleTrustedIpc("auth:getUser", ["main", "auth-popup"], async () =>
     getAuthenticatedUser(),
   );
