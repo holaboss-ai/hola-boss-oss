@@ -56,7 +56,6 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DotmSquare3 } from "@/components/ui/dotm-square-3";
@@ -7144,19 +7143,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const hasLoaderHeader =
     isLoadingOlderHistory ||
     loadedHistoryMessageCount < totalHistoryMessageCount;
-  const virtualItemCount =
-    (hasLoaderHeader ? 1 : 0) +
-    displayMessages.length +
-    (showLiveAssistantTurn ? 1 : 0);
-  const messageRowVirtualizer = useVirtualizer({
-    count: virtualItemCount,
-    getScrollElement: () => messagesRef.current,
-    estimateSize: () => 120,
-    overscan: 6,
-    paddingStart: 20,
-    paddingEnd: 12,
-  });
-  const virtualMessageRows = messageRowVirtualizer.getVirtualItems();
   const readinessMessage =
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
@@ -7910,206 +7896,138 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                 lastChatScrollTopRef.current = nextScrollTop;
                 const nearBottom = isNearChatBottom(currentTarget);
                 shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
-                scheduleChatScrollMetricsSync(currentTarget);
                 if (
                   currentTarget.scrollTop <= CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX
                 ) {
                   void loadOlderSessionHistory();
                 }
               }}
-              className={`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
+              className={`h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  style={{
-                    height: messageRowVirtualizer.getTotalSize(),
-                    position: "relative",
-                    width: "100%",
-                  }}
-                  className={showHistoryRestoreScreen ? "invisible" : ""}
+                  className={`flex min-w-0 w-full flex-col gap-4 pl-4 pr-7 pb-3 pt-5 ${
+                    showHistoryRestoreScreen ? "invisible" : ""
+                  }`}
                 >
-                  {virtualMessageRows.map((virtualRow) => {
-                    const loaderOffset = hasLoaderHeader ? 1 : 0;
-                    const rowStyle = {
-                      position: "absolute" as const,
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      transform: `translateY(${virtualRow.start}px)`,
-                    };
-                    const innerClassName =
-                      "pl-4 pr-7 pb-4";
-
-                    if (hasLoaderHeader && virtualRow.index === 0) {
-                      return (
-                        <div
-                          key="loader-header"
-                          data-index={virtualRow.index}
-                          ref={messageRowVirtualizer.measureElement}
-                          style={rowStyle}
-                        >
-                          <div className={`${innerClassName} flex justify-center`}>
-                            <div className="rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground">
-                              {isLoadingOlderHistory
-                                ? "Loading earlier messages..."
-                                : "Scroll up for earlier messages"}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    const messageIndex = virtualRow.index - loaderOffset;
-                    if (messageIndex < displayMessages.length) {
-                      const message = displayMessages[messageIndex]!;
-                      return (
-                        <div
-                          key={message.id}
-                          data-index={virtualRow.index}
-                          ref={messageRowVirtualizer.measureElement}
-                          style={rowStyle}
-                        >
-                          <div className={innerClassName}>
-                            {message.role === "user" ? (
-                              <UserTurn
-                                text={message.text}
-                                createdAt={message.createdAt}
-                                attachments={message.attachments ?? EMPTY_ATTACHMENTS}
-                                onPreviewAttachment={openImageAttachmentPreview}
-                                onLinkClick={onOpenLinkInBrowser}
-                                onLocalLinkClick={onOpenLocalLink}
-                              />
-                            ) : (
-                              <AssistantTurn
-                                label={assistantLabel}
-                                mode={assistantMode}
-                                showSeparator={messageIndex > 0}
-                                showExecutionInternals={
-                                  showSessionExecutionInternals
-                                }
-                                text={message.text}
-                                tone={message.tone ?? "default"}
-                                segments={message.segments ?? EMPTY_SEGMENTS}
-                                executionItems={message.executionItems ?? EMPTY_EXECUTION_ITEMS}
-                                memoryProposals={message.memoryProposals ?? EMPTY_MEMORY_PROPOSALS}
-                                outputs={message.outputs ?? EMPTY_OUTPUTS}
-                                memoryProposalAction={memoryProposalAction}
-                                editingMemoryProposalId={
-                                  editingMemoryProposalId
-                                }
-                                memoryProposalDrafts={memoryProposalDrafts}
-                                onEditMemoryProposal={(proposalId) => {
-                                  setEditingMemoryProposalId((current) => {
-                                    const next =
-                                      current === proposalId
-                                        ? null
-                                        : proposalId;
-                                    if (next === proposalId) {
-                                      const proposal = (
-                                        message.memoryProposals ?? []
-                                      ).find(
-                                        (item) =>
-                                          item.proposal_id === proposalId,
-                                      );
-                                      if (proposal) {
-                                        setMemoryProposalDrafts((prev) => ({
-                                          ...prev,
-                                          [proposalId]:
-                                            prev[proposalId] ??
-                                            proposal.summary,
-                                        }));
-                                      }
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                onMemoryProposalDraftChange={
-                                  updateMemoryProposalDraft
-                                }
-                                onAcceptMemoryProposal={
-                                  handleAcceptMemoryProposal
-                                }
-                                onDismissMemoryProposal={
-                                  handleDismissMemoryProposal
-                                }
-                                onOpenOutput={onOpenOutput}
-                                onOpenAllArtifacts={(outputs) => {
-                                  setArtifactBrowserFilter("all");
-                                  setArtifactBrowserScopedOutputs(outputs);
-                                  setArtifactBrowserScope("reply");
-                                  setArtifactBrowserOpen(true);
-                                }}
-                                collapsedTraceByStepId={collapsedTraceByStepId}
-                                onToggleTraceStep={toggleTraceStep}
-                                onLinkClick={onOpenLinkInBrowser}
-                                onLocalLinkClick={onOpenLocalLink}
-                                footerAccessory={
-                                  message.id ===
-                                  lastCompletedAssistantMessageId
-                                    ? sessionBrowserJumpCta
-                                    : null
-                                }
-                              />
-                            )}
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key="live-assistant"
-                        data-index={virtualRow.index}
-                        ref={messageRowVirtualizer.measureElement}
-                        style={rowStyle}
-                      >
-                        <div className={innerClassName}>
-                          <AssistantTurn
-                            label={assistantLabel}
-                            mode={assistantMode}
-                            showSeparator={displayMessages.length > 0}
-                            showExecutionInternals={
-                              showSessionExecutionInternals
-                            }
-                            text={liveAssistantText}
-                            tone="default"
-                            segments={renderedLiveAssistantSegments}
-                            executionItems={liveExecutionItems}
-                            memoryProposals={EMPTY_MEMORY_PROPOSALS}
-                            outputs={EMPTY_OUTPUTS}
-                            memoryProposalAction={memoryProposalAction}
-                            editingMemoryProposalId={editingMemoryProposalId}
-                            memoryProposalDrafts={memoryProposalDrafts}
-                            onEditMemoryProposal={() => undefined}
-                            onMemoryProposalDraftChange={
-                              updateMemoryProposalDraft
-                            }
-                            onAcceptMemoryProposal={handleAcceptMemoryProposal}
-                            onDismissMemoryProposal={
-                              handleDismissMemoryProposal
-                            }
-                            onOpenOutput={onOpenOutput}
-                            onOpenAllArtifacts={(outputs) => {
-                              setArtifactBrowserFilter("all");
-                              setArtifactBrowserScopedOutputs(outputs);
-                              setArtifactBrowserScope("reply");
-                              setArtifactBrowserOpen(true);
-                            }}
-                            collapsedTraceByStepId={collapsedTraceByStepId}
-                            onToggleTraceStep={toggleTraceStep}
-                            onLinkClick={onOpenLinkInBrowser}
-                            onLocalLinkClick={onOpenLocalLink}
-                            live
-                            statusAccessory={sessionBrowserJumpCta}
-                            status={
-                              liveAgentStatus || (isResponding ? "Working" : "")
-                            }
-                          />
-                        </div>
+                  {hasLoaderHeader ? (
+                    <div className="flex justify-center">
+                      <div className="rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground">
+                        {isLoadingOlderHistory
+                          ? "Loading earlier messages..."
+                          : "Scroll up for earlier messages"}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ) : null}
+                  {displayMessages.map((message, index) =>
+                    message.role === "user" ? (
+                      <UserTurn
+                        key={message.id}
+                        text={message.text}
+                        createdAt={message.createdAt}
+                        attachments={message.attachments ?? EMPTY_ATTACHMENTS}
+                        onPreviewAttachment={openImageAttachmentPreview}
+                        onLinkClick={onOpenLinkInBrowser}
+                        onLocalLinkClick={onOpenLocalLink}
+                      />
+                    ) : (
+                      <AssistantTurn
+                        key={message.id}
+                        label={assistantLabel}
+                        mode={assistantMode}
+                        showSeparator={index > 0}
+                        showExecutionInternals={
+                          showSessionExecutionInternals
+                        }
+                        text={message.text}
+                        tone={message.tone ?? "default"}
+                        segments={message.segments ?? EMPTY_SEGMENTS}
+                        executionItems={message.executionItems ?? EMPTY_EXECUTION_ITEMS}
+                        memoryProposals={message.memoryProposals ?? EMPTY_MEMORY_PROPOSALS}
+                        outputs={message.outputs ?? EMPTY_OUTPUTS}
+                        memoryProposalAction={memoryProposalAction}
+                        editingMemoryProposalId={editingMemoryProposalId}
+                        memoryProposalDrafts={memoryProposalDrafts}
+                        onEditMemoryProposal={(proposalId) => {
+                          setEditingMemoryProposalId((current) => {
+                            const next =
+                              current === proposalId ? null : proposalId;
+                            if (next === proposalId) {
+                              const proposal = (
+                                message.memoryProposals ?? []
+                              ).find((item) => item.proposal_id === proposalId);
+                              if (proposal) {
+                                setMemoryProposalDrafts((prev) => ({
+                                  ...prev,
+                                  [proposalId]:
+                                    prev[proposalId] ?? proposal.summary,
+                                }));
+                              }
+                            }
+                            return next;
+                          });
+                        }}
+                        onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                        onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                        onDismissMemoryProposal={handleDismissMemoryProposal}
+                        onOpenOutput={onOpenOutput}
+                        onOpenAllArtifacts={(outputs) => {
+                          setArtifactBrowserFilter("all");
+                          setArtifactBrowserScopedOutputs(outputs);
+                          setArtifactBrowserScope("reply");
+                          setArtifactBrowserOpen(true);
+                        }}
+                        collapsedTraceByStepId={collapsedTraceByStepId}
+                        onToggleTraceStep={toggleTraceStep}
+                        onLinkClick={onOpenLinkInBrowser}
+                        onLocalLinkClick={onOpenLocalLink}
+                        footerAccessory={
+                          message.id === lastCompletedAssistantMessageId
+                            ? sessionBrowserJumpCta
+                            : null
+                        }
+                      />
+                    ),
+                  )}
+
+                  {showLiveAssistantTurn ? (
+                    <AssistantTurn
+                      label={assistantLabel}
+                      mode={assistantMode}
+                      showSeparator={displayMessages.length > 0}
+                      showExecutionInternals={showSessionExecutionInternals}
+                      text={liveAssistantText}
+                      tone="default"
+                      segments={renderedLiveAssistantSegments}
+                      executionItems={liveExecutionItems}
+                      memoryProposals={EMPTY_MEMORY_PROPOSALS}
+                      outputs={EMPTY_OUTPUTS}
+                      memoryProposalAction={memoryProposalAction}
+                      editingMemoryProposalId={editingMemoryProposalId}
+                      memoryProposalDrafts={memoryProposalDrafts}
+                      onEditMemoryProposal={() => undefined}
+                      onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                      onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                      onDismissMemoryProposal={handleDismissMemoryProposal}
+                      onOpenOutput={onOpenOutput}
+                      onOpenAllArtifacts={(outputs) => {
+                        setArtifactBrowserFilter("all");
+                        setArtifactBrowserScopedOutputs(outputs);
+                        setArtifactBrowserScope("reply");
+                        setArtifactBrowserOpen(true);
+                      }}
+                      collapsedTraceByStepId={collapsedTraceByStepId}
+                      onToggleTraceStep={toggleTraceStep}
+                      onLinkClick={onOpenLinkInBrowser}
+                      onLocalLinkClick={onOpenLocalLink}
+                      live
+                      statusAccessory={sessionBrowserJumpCta}
+                      status={
+                        liveAgentStatus || (isResponding ? "Working" : "")
+                      }
+                    />
+                  ) : null}
                 </div>
               ) : (
                 <div
