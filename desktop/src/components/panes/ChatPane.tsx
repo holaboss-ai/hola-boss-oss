@@ -3229,6 +3229,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const composerBlockRef = useRef<HTMLDivElement>(null);
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
+  const [isAwayFromChatBottom, setIsAwayFromChatBottom] = useState(false);
   const pendingOptimisticUserMessagesRef = useRef<
     PendingOptimisticUserMessage[]
   >([]);
@@ -7896,6 +7897,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                 lastChatScrollTopRef.current = nextScrollTop;
                 const nearBottom = isNearChatBottom(currentTarget);
                 shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
+                setIsAwayFromChatBottom((current) =>
+                  current === !nearBottom ? current : !nearBottom,
+                );
                 if (
                   currentTarget.scrollTop <= CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX
                 ) {
@@ -8035,22 +8039,26 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
                 >
-                  <div className="mx-auto mb-6 max-w-[560px] text-center">
-                    <div className="text-xl font-medium text-foreground">
+                  <div className="mx-auto mb-8 flex max-w-[520px] flex-col items-center text-center">
+                    <h2 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
                       {isLoadingBootstrap || isLoadingHistory
                         ? "Loading workspace context"
                         : isOnboardingVariant
                           ? "Complete workspace onboarding"
-                          : "Ask the workspace agent"}
-                    </div>
-                    <div className="mt-3 text-sm leading-7 text-muted-foreground">
-                      {selectedWorkspace
-                        ? readinessMessage ||
-                          (isOnboardingVariant
-                            ? "Follow the setup conversation here. The agent will use the workspace guide to ask only onboarding questions and capture durable setup facts."
-                            : "Messages are queued into the local runtime workspace flow, then streamed back from the live session output feed.")
-                        : "Pick a template, create a workspace, and then send the first instruction."}
-                    </div>
+                          : "What can I help with?"}
+                    </h2>
+                    {(() => {
+                      const hint = !selectedWorkspace
+                        ? "Pick a template, create a workspace, then send the first instruction."
+                        : isOnboardingVariant
+                          ? "I'll ask a few setup questions and remember your answers."
+                          : readinessMessage;
+                      return hint ? (
+                        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                          {hint}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                   <form onSubmit={onSubmit} className="w-full">
                     <div className="space-y-3">
@@ -8127,6 +8135,26 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                 </div>
               )}
             </div>
+
+            {hasMessages && isAwayFromChatBottom ? (
+              <button
+                aria-label="Jump to latest message"
+                className="absolute bottom-3 left-1/2 z-30 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs text-foreground shadow-subtle-sm transition-colors hover:bg-muted animate-in fade-in-0 slide-in-from-bottom-1 duration-150"
+                onClick={() => {
+                  const container = messagesRef.current;
+                  if (!container) return;
+                  shouldAutoScrollRef.current = true;
+                  container.scrollTo({
+                    top: container.scrollHeight,
+                    behavior: "smooth",
+                  });
+                }}
+                type="button"
+              >
+                <ChevronDown className="size-3.5" />
+                Jump to latest
+              </button>
+            ) : null}
 
             {showCustomChatScrollbar ? (
               <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4 opacity-0 transition-opacity duration-200 group-hover/chat-scroll:opacity-100">
