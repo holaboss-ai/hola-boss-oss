@@ -6,6 +6,7 @@ import {
   FormEvent,
   KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  memo,
   type ReactNode,
   type RefObject,
   useCallback,
@@ -115,6 +116,12 @@ type ChatAssistantSegment =
       text: string;
       tone?: "default" | "error";
     };
+
+const EMPTY_ATTACHMENTS: ChatAttachment[] = [];
+const EMPTY_SEGMENTS: ChatAssistantSegment[] = [];
+const EMPTY_EXECUTION_ITEMS: ChatExecutionTimelineItem[] = [];
+const EMPTY_OUTPUTS: WorkspaceOutputRecordPayload[] = [];
+const EMPTY_MEMORY_PROPOSALS: MemoryUpdateProposalRecordPayload[] = [];
 
 interface ChatMessage {
   id: string;
@@ -7968,7 +7975,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                               <UserTurn
                                 text={message.text}
                                 createdAt={message.createdAt}
-                                attachments={message.attachments ?? []}
+                                attachments={message.attachments ?? EMPTY_ATTACHMENTS}
                                 onPreviewAttachment={openImageAttachmentPreview}
                                 onLinkClick={onOpenLinkInBrowser}
                                 onLocalLinkClick={onOpenLocalLink}
@@ -7983,10 +7990,10 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                                 }
                                 text={message.text}
                                 tone={message.tone ?? "default"}
-                                segments={message.segments ?? []}
-                                executionItems={message.executionItems ?? []}
-                                memoryProposals={message.memoryProposals ?? []}
-                                outputs={message.outputs ?? []}
+                                segments={message.segments ?? EMPTY_SEGMENTS}
+                                executionItems={message.executionItems ?? EMPTY_EXECUTION_ITEMS}
+                                memoryProposals={message.memoryProposals ?? EMPTY_MEMORY_PROPOSALS}
+                                outputs={message.outputs ?? EMPTY_OUTPUTS}
                                 memoryProposalAction={memoryProposalAction}
                                 editingMemoryProposalId={
                                   editingMemoryProposalId
@@ -8069,8 +8076,8 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                             tone="default"
                             segments={renderedLiveAssistantSegments}
                             executionItems={liveExecutionItems}
-                            memoryProposals={[]}
-                            outputs={[]}
+                            memoryProposals={EMPTY_MEMORY_PROPOSALS}
+                            outputs={EMPTY_OUTPUTS}
                             memoryProposalAction={memoryProposalAction}
                             editingMemoryProposalId={editingMemoryProposalId}
                             memoryProposalDrafts={memoryProposalDrafts}
@@ -8517,7 +8524,13 @@ interface ComposerProps {
   onPreviewAttachment: (attachment: AttachmentListItem) => void;
 }
 
-function UserTurn({
+const UserTurn = memo(UserTurnComponent, (prev, next) =>
+  prev.text === next.text &&
+  prev.createdAt === next.createdAt &&
+  prev.attachments === next.attachments,
+);
+
+function UserTurnComponent({
   text,
   createdAt,
   attachments,
@@ -8970,7 +8983,28 @@ function AssistantTurnActionsMenu({
   );
 }
 
-function AssistantTurn({
+const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
+  prev.label === next.label &&
+  prev.mode === next.mode &&
+  prev.showSeparator === next.showSeparator &&
+  prev.showExecutionInternals === next.showExecutionInternals &&
+  prev.text === next.text &&
+  prev.tone === next.tone &&
+  prev.segments === next.segments &&
+  prev.executionItems === next.executionItems &&
+  prev.memoryProposals === next.memoryProposals &&
+  prev.outputs === next.outputs &&
+  prev.memoryProposalAction === next.memoryProposalAction &&
+  prev.editingMemoryProposalId === next.editingMemoryProposalId &&
+  prev.memoryProposalDrafts === next.memoryProposalDrafts &&
+  prev.collapsedTraceByStepId === next.collapsedTraceByStepId &&
+  prev.live === next.live &&
+  prev.status === next.status &&
+  prev.statusAccessory === next.statusAccessory &&
+  prev.footerAccessory === next.footerAccessory,
+);
+
+function AssistantTurnComponent({
   label,
   mode,
   showSeparator = false,
