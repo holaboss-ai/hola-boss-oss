@@ -42,6 +42,8 @@ import {
   Lightbulb,
   Link2,
   Loader2,
+  ListTree,
+  MoreHorizontal,
   Paperclip,
   PencilLine,
   Plus,
@@ -54,6 +56,13 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { BackgroundTasksPane } from "@/components/panes/BackgroundTasksPane";
@@ -8773,6 +8782,136 @@ function QueuedSessionInputRail({
   );
 }
 
+/**
+ * True when the agent invoked any filesystem-mutating tool inside this
+ * turn's execution items. Drives whether the per-turn actions menu offers
+ * "View file changes" — if no Edit / Write / patch happened, the menu
+ * entry is hidden so users aren't taught a useless affordance.
+ */
+function executionItemsHaveFileEdits(
+  items: ChatExecutionTimelineItem[],
+): boolean {
+  if (items.length === 0) {
+    return false;
+  }
+  return items.some((item) => {
+    if (item.kind !== "trace_step" || item.step.kind !== "tool") {
+      return false;
+    }
+    const title = item.step.title.toLowerCase();
+    // Tool names exposed to the user surface as "Edit"/"Write"/"Patch"/
+    // "Replace"/"MultiEdit". Match by lowercase substring rather than
+    // exact equality because titles often include the file path
+    // ("Write README.md", "Edit src/foo.ts").
+    return (
+      title.startsWith("edit") ||
+      title.startsWith("write") ||
+      title.startsWith("patch") ||
+      title.startsWith("replace") ||
+      title.startsWith("multiedit") ||
+      title.startsWith("apply") ||
+      title.startsWith("create file")
+    );
+  });
+}
+
+interface AssistantTurnActionsMenuProps {
+  /** Plain-text content the user gets when clicking Copy. */
+  copyText: string;
+  /**
+   * Triggered when the user picks "View turn details". Optional — when
+   * not provided the entry is hidden. Implementation typically expands
+   * the trace group + scrolls it into view.
+   */
+  onViewTurnDetails?: () => void;
+  /**
+   * Triggered when the user picks "View file changes". Optional + only
+   * meaningful when the turn invoked file-mutating tools.
+   */
+  onViewFileChanges?: () => void;
+  /** When true, render the file-changes entry even without a callback. */
+  hasFileEdits?: boolean;
+}
+
+/**
+ * Per-assistant-turn 3-dot menu shown on hover. Mirrors the user-side
+ * copy affordance so both speakers get parity. The menu is intentionally
+ * narrow (Copy + maybe one or two domain actions) — adding more makes
+ * the chat surface noisy on every turn.
+ */
+function AssistantTurnActionsMenu({
+  copyText,
+  onViewTurnDetails,
+  onViewFileChanges,
+  hasFileEdits,
+}: AssistantTurnActionsMenuProps) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    if (!copyText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(copyText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Some embedded WebContents block clipboard from non-user-gesture
+      // contexts. Silent — the menu item exists for the gesture path.
+    }
+  }
+
+  const showFileChanges = Boolean(onViewFileChanges) && Boolean(hasFileEdits);
+  const canCopy = copyText.trim().length > 0;
+
+  // Nothing to show — don't render an empty trigger that just confuses
+  // users when they hover and the menu is empty.
+  if (!canCopy && !onViewTurnDetails && !showFileChanges) {
+    return null;
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            aria-label="Turn actions"
+            className="size-6 rounded-lg text-muted-foreground hover:bg-foreground/6 hover:text-foreground"
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+          >
+            <MoreHorizontal className="size-3.5" strokeWidth={1.9} />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-44" sideOffset={4}>
+        {canCopy ? (
+          <DropdownMenuItem onClick={() => void handleCopy()}>
+            {copied ? <Check /> : <Copy />}
+            {copied ? "Copied" : "Copy message"}
+          </DropdownMenuItem>
+        ) : null}
+        {onViewTurnDetails ? (
+          <DropdownMenuItem onClick={onViewTurnDetails}>
+            <ListTree />
+            View turn details
+          </DropdownMenuItem>
+        ) : null}
+        {showFileChanges ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onViewFileChanges}>
+              <FileCode2 />
+              View file changes
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function AssistantTurn({
   label,
   mode,
@@ -8875,6 +9014,30 @@ function AssistantTurn({
     live && Boolean(normalizedStatus) && renderedSegments.length === 0;
   const showWorkingStatusLine =
     live && showExecutionInternals && renderedSegments.length > 0;
+
+  // Bumped by the per-turn actions menu's "View turn details" item; threads
+  // through every TraceStepGroup in this turn to force-expand them.
+  const [forceExpandToken, setForceExpandToken] = useState(0);
+  const hasFileEdits = useMemo(
+    () => executionItemsHaveFileEdits(executionItems),
+    [executionItems],
+  );
+  // Plain-text we feed to the Copy menu item — concatenate output segments;
+  // execution segments are noise for paste targets like a doc or message.
+  const copyText = useMemo(
+    () =>
+      renderedSegments
+        .filter(
+          (segment): segment is Extract<ChatAssistantSegment, { kind: "output" }> =>
+            segment.kind === "output",
+        )
+        .map((segment) => segment.text)
+        .join("\n\n")
+        .trim() || text.trim(),
+    [renderedSegments, text],
+  );
+  const hasAnyContent = renderedSegments.length > 0;
+  const showActionsMenu = hasAnyContent && !live;
   const renderStatusLine = (nextLabel: string, className = "") => {
     if (!showExecutionInternals) {
       return (
@@ -8899,7 +9062,7 @@ function AssistantTurn({
 
   return (
     <div
-      className={`flex min-w-0 justify-start ${showSeparator ? "mt-2" : ""}`.trim()}
+      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-2" : ""}`.trim()}
     >
       <article
         className={`min-w-0 w-full max-w-4xl ${
@@ -8924,6 +9087,7 @@ function AssistantTurn({
               }
               onLinkClick={onLinkClick}
               onLocalLinkClick={onLocalLinkClick}
+              forceExpandToken={forceExpandToken}
             />
           ) : segment.tone === "error" ? (
             <div
@@ -8987,6 +9151,25 @@ function AssistantTurn({
           />
         ) : null}
       </article>
+
+      {showActionsMenu ? (
+        <div className="pointer-events-none absolute top-1.5 right-1.5 opacity-0 transition-opacity duration-150 group-hover/assistant-turn:pointer-events-auto group-hover/assistant-turn:opacity-100 group-focus-within/assistant-turn:pointer-events-auto group-focus-within/assistant-turn:opacity-100">
+          <AssistantTurnActionsMenu
+            copyText={copyText}
+            hasFileEdits={hasFileEdits}
+            onViewFileChanges={
+              hasFileEdits
+                ? () => setForceExpandToken((token) => token + 1)
+                : undefined
+            }
+            onViewTurnDetails={
+              executionItems.length > 0
+                ? () => setForceExpandToken((token) => token + 1)
+                : undefined
+            }
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -9628,7 +9811,11 @@ function LiveStatusLine({
   return (
     <div
       aria-live="polite"
-      className={`inline-flex items-baseline gap-0.5 text-xs leading-6 text-muted-foreground ${className}`.trim()}
+      // Keyed on the label so a status change ("Thinking" → "Editing
+      // README.md") triggers a fresh fade-in instead of an abrupt swap —
+      // makes long agent runs feel responsive instead of glitchy.
+      key={normalizedLabel}
+      className={`inline-flex items-baseline gap-0.5 text-xs leading-6 text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-0.5 duration-200 ease-out ${className}`.trim()}
     >
       <span>{normalizedLabel}</span>
       <LiveStatusEllipsis />
@@ -9647,7 +9834,7 @@ function TypingStatusLine({
     <div
       aria-live="polite"
       aria-label="Assistant is typing"
-      className={`inline-flex items-center text-[18px] leading-none tracking-[0.18em] text-muted-foreground/78 ${className}`.trim()}
+      className={`inline-flex items-center text-[18px] leading-none tracking-[0.18em] text-muted-foreground/78 animate-in fade-in-0 duration-200 ease-out ${className}`.trim()}
     >
       <LiveStatusEllipsis />
     </div>
@@ -9764,6 +9951,7 @@ function TraceStepGroup({
   liveOutputStarted = false,
   onLinkClick,
   onLocalLinkClick,
+  forceExpandToken = 0,
 }: {
   items: ChatExecutionTimelineItem[];
   collapsedByStepId: Record<string, boolean>;
@@ -9772,6 +9960,12 @@ function TraceStepGroup({
   liveOutputStarted?: boolean;
   onLinkClick?: (url: string) => void;
   onLocalLinkClick?: (href: string) => void;
+  /**
+   * Counter the parent bumps to force the group open — used by the per-turn
+   * "View turn details" action so the user lands on a fully expanded trace
+   * even if they had previously collapsed it.
+   */
+  forceExpandToken?: number;
 }) {
   const steps = traceStepsFromExecutionItems(items);
   const [groupExpanded, setGroupExpanded] = useState(
@@ -9779,6 +9973,19 @@ function TraceStepGroup({
   );
   const previousLiveRef = useRef(live);
   const previousLiveOutputStartedRef = useRef(liveOutputStarted);
+  const previousForceExpandTokenRef = useRef(forceExpandToken);
+
+  // External force-expand: bump from the per-turn actions menu opens the
+  // group regardless of its previous state. Mounting at token 0 is a no-op
+  // so first paint stays governed by the live/output flow above.
+  useEffect(() => {
+    if (forceExpandToken !== previousForceExpandTokenRef.current) {
+      previousForceExpandTokenRef.current = forceExpandToken;
+      if (forceExpandToken > 0) {
+        setGroupExpanded(true);
+      }
+    }
+  }, [forceExpandToken]);
 
   useEffect(() => {
     if (live && !previousLiveRef.current) {
@@ -9835,8 +10042,12 @@ function TraceStepGroup({
         ? `Running ${stepLabel}...`
         : latestThinkingItem
           ? summarizeThinking(latestThinkingItem.text)
-          : stepCount > 0
-            ? `Used ${stepLabel}`
+          : stepCount > 0 && latestStep
+            ? // Done state: surface the last action's title so a user
+              // skimming the chat sees "Edited README.md" / "Searched
+              // marketplace" instead of "Used 5 steps". Step count
+              // moves into a trailing badge.
+              latestStep.title
             : "Execution trace";
 
   return (
@@ -9855,10 +10066,18 @@ function TraceStepGroup({
         ) : (
           <Check className="size-3.5 shrink-0 text-success" />
         )}
-        <span className="min-w-0 flex-1 leading-5">
+        <span className="min-w-0 flex-1 truncate leading-5">
           {summaryLabel}
           {summarySuffix}
         </span>
+        {stepCount > 0 && !groupIsLive && !groupHasTerminalError ? (
+          <span
+            aria-hidden
+            className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground"
+          >
+            {stepCount}
+          </span>
+        ) : null}
         <ChevronDown
           className={`size-3 shrink-0 transition-transform ${groupExpanded ? "rotate-180" : ""}`}
         />
