@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { ensureWorkspaceStateDir } from "./workspace-bundle-paths.js";
 
 const WORKSPACE_MCP_STATE_VERSION = 1;
 const WORKSPACE_MCP_READY_POLL_MS = 200;
@@ -57,7 +58,27 @@ function sanitizeId(value: string): string {
 }
 
 function stateDirForWorkspace(workspaceDir: string): string {
-  return path.join(path.dirname(path.resolve(workspaceDir)), ".holaboss");
+  const resolvedWorkspaceDir = path.resolve(workspaceDir);
+  const targetStateDir = ensureWorkspaceStateDir(resolvedWorkspaceDir);
+  const legacySharedDir = path.join(path.dirname(resolvedWorkspaceDir), ".holaboss");
+  const legacyStatePath = path.join(legacySharedDir, "workspace-mcp-sidecar-state.json");
+  const nextStatePath = path.join(targetStateDir, "workspace-mcp-sidecar-state.json");
+  if (fs.existsSync(legacyStatePath) && !fs.existsSync(nextStatePath)) {
+    fs.renameSync(legacyStatePath, nextStatePath);
+  }
+  if (fs.existsSync(legacySharedDir) && fs.statSync(legacySharedDir).isDirectory()) {
+    for (const childName of fs.readdirSync(legacySharedDir)) {
+      if (!childName.endsWith(".workspace-mcp-sidecar.stdout.log") && !childName.endsWith(".workspace-mcp-sidecar.stderr.log")) {
+        continue;
+      }
+      const sourcePath = path.join(legacySharedDir, childName);
+      const targetPath = path.join(targetStateDir, childName);
+      if (!fs.existsSync(targetPath)) {
+        fs.renameSync(sourcePath, targetPath);
+      }
+    }
+  }
+  return targetStateDir;
 }
 
 function workspaceMcpStatePath(workspaceDir: string): string {

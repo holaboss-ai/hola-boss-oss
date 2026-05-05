@@ -10,6 +10,7 @@ import type {
   RuntimeStateStore,
 } from "@holaboss/runtime-state-store";
 import yaml from "js-yaml";
+import { resolveMemoryFilePath } from "./workspace-bundle-paths.js";
 
 import type { AgentRecalledMemoryContext } from "./agent-runtime-prompt.js";
 import { governanceRuleForMemoryType, assessMemoryFreshness } from "./memory-governance.js";
@@ -130,15 +131,17 @@ function normalizeRelPath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
-function resolveMemoryRootDir(workspaceRoot: string, workspaceId: string): string {
-  const configured = (process.env.MEMORY_ROOT_DIR ?? "").trim();
-  if (!configured) {
-    return path.join(workspaceRoot, "memory");
-  }
-  if (path.isAbsolute(configured)) {
-    return path.resolve(configured);
-  }
-  return path.resolve(path.join(workspaceRoot, configured));
+function resolveMemoryAbsolutePath(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  relPath: string;
+}): string {
+  return resolveMemoryFilePath({
+    workspaceRoot: params.workspaceRoot,
+    workspaceDir: path.join(params.workspaceRoot, params.workspaceId),
+    workspaceId: params.workspaceId,
+    relPath: params.relPath,
+  });
 }
 
 function frontmatterBlock(value: string): string | null {
@@ -311,7 +314,6 @@ function identityMemoryIndexPath(): string {
 }
 
 function indexFiles(workspaceRoot: string, workspaceId: string): IndexFileRecord[] {
-  const memoryRootDir = resolveMemoryRootDir(workspaceRoot, workspaceId);
   const records: Array<{ path: string; scope: RecallScope | "root" }> = [
     { path: rootMemoryIndexPath(), scope: "root" },
     { path: workspaceMemoryIndexPath(workspaceId), scope: "workspace" },
@@ -319,7 +321,11 @@ function indexFiles(workspaceRoot: string, workspaceId: string): IndexFileRecord
     { path: identityMemoryIndexPath(), scope: "identity" },
   ];
   return records.map((record) => {
-    const absPath = path.join(memoryRootDir, record.path);
+    const absPath = resolveMemoryAbsolutePath({
+      workspaceRoot,
+      workspaceId,
+      relPath: record.path,
+    });
     return {
       path: record.path,
       absPath,
@@ -730,8 +736,11 @@ function readLeafMemoryRecord(params: {
   if (!recallScope) {
     return null;
   }
-  const memoryRootDir = resolveMemoryRootDir(params.workspaceRoot, params.workspaceId);
-  const absPath = path.join(memoryRootDir, params.relPath);
+  const absPath = resolveMemoryAbsolutePath({
+    workspaceRoot: params.workspaceRoot,
+    workspaceId: params.workspaceId,
+    relPath: params.relPath,
+  });
   if (!fs.existsSync(absPath)) {
     return null;
   }

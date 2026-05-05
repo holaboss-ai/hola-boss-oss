@@ -3301,7 +3301,7 @@ export class RuntimeAgentToolsService {
         row_count: rows.length,
         column_count: columns.length,
         replaced_existing: exists && replaceExisting,
-        db_path: ".holaboss/data.db",
+        db_path: ".holaboss/state/data.db",
       };
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {

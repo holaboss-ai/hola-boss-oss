@@ -13218,7 +13218,7 @@ async function runDashboardQuery(params: {
     return { ok: false, error: "Query is empty." };
   }
   const workspaceDir = await resolveWorkspaceDir(workspaceId);
-  const dbPath = path.join(workspaceDir, ".holaboss", "data.db");
+  const dbPath = path.join(workspaceDir, ".holaboss", "state", "data.db");
   if (!existsSync(dbPath)) {
     return {
       ok: false,
@@ -14118,7 +14118,7 @@ async function pickWorkspaceRelocationFolder(
     if (!stat.isDirectory()) {
       throw new Error("Selected path is not a directory.");
     }
-    // Accept if it contains a matching .holaboss/workspace_id identity file.
+    // Accept if it contains a matching .holaboss/state/workspace_id identity file.
     const identityFilePath = path.join(rootPath, ".holaboss", "workspace_id");
     if (existsSync(identityFilePath)) {
       const storedId = readFileSync(identityFilePath, "utf-8").trim();

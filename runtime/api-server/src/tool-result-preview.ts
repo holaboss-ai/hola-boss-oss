@@ -17,6 +17,7 @@ import {
   TOOL_RESULT_PREVIEW_TEXT_MAX_CHARS,
   TOOL_RESULT_PREVIEW_TEXT_TRIM_THRESHOLD_CHARS,
 } from "./tool-result-budget.js";
+import { workspaceStateRelativePath } from "./workspace-bundle-paths.js";
 
 export const TOOL_RESULT_MODE_HEADER = "x-holaboss-tool-result-mode";
 export const TOOL_RESULT_MODE_PREVIEW = "preview";
@@ -145,8 +146,7 @@ async function writeToolResultArtifact(params: {
     params.extension,
     "txt",
   )}`;
-  const relativePath = path.posix.join(
-    ".holaboss",
+  const relativePath = workspaceStateRelativePath(
     "tool-results",
     toolToken,
     sessionToken,

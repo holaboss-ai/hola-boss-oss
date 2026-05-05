@@ -465,7 +465,7 @@ function legacySessionHistoryContextPromptSection(
   const entries = Array.isArray(context.entries) ? context.entries : [];
   const lines = [
     "Legacy session history exports:",
-    "Older front-of-house workspace sessions may have been migrated out of the live transcript and exported to `.holaboss/legacy-session-histories`.",
+    "Older front-of-house workspace sessions may have been migrated out of the live transcript and exported to `.holaboss/state/legacy-session-histories`.",
     "These exports are not automatically merged into the current conversation state.",
     "When the user asks about prior workspace conversations, past sessions, or historical context, consult the manifest or a directly relevant export before saying that prior session context is unavailable.",
     "Use `list`, `glob`, and `read` to inspect these legacy exports when needed.",

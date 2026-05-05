@@ -1,5 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  globalMemoryDirForWorkspaceRoot,
+  migrateLegacyWorkspaceMemoryIfNeeded,
+  workspaceMemoryDir,
+} from "./workspace-bundle-paths.js";
 
 const MEMORY_BACKEND_ENV = "MEMORY_BACKEND";
 const MEMORY_ROOT_DIR_ENV = "MEMORY_ROOT_DIR";
@@ -135,18 +140,6 @@ function workspaceDirForWorkspaceId(workspaceRoot: string, workspaceId: string):
   return workspaceDir;
 }
 
-function resolveMemoryRootDir(workspaceDir: string): string {
-  const configured = (process.env[MEMORY_ROOT_DIR_ENV] ?? "").trim();
-  const baseDir = path.dirname(path.resolve(workspaceDir));
-  if (!configured) {
-    return path.resolve(baseDir, "memory");
-  }
-  if (path.isAbsolute(configured)) {
-    return path.resolve(configured);
-  }
-  return path.resolve(baseDir, configured);
-}
-
 function listMarkdownFiles(root: string): string[] {
   if (!fs.existsSync(root)) {
     return [];
@@ -263,23 +256,82 @@ function resolveMemoryBackend(): ResolvedMemoryBackend {
   };
 }
 
-function memoryFiles(memoryRootDir: string, workspaceId: string): string[] {
+function workspaceMemoryFiles(workspaceMemoryRootDir: string): string[] {
   const files: string[] = [];
-  const rootEntrypoint = path.join(memoryRootDir, "MEMORY.md");
+  const rootEntrypoint = path.join(workspaceMemoryRootDir, "MEMORY.md");
   if (fs.existsSync(rootEntrypoint) && fs.statSync(rootEntrypoint).isFile()) {
     files.push(rootEntrypoint);
   }
-  files.push(...listMarkdownFiles(path.join(memoryRootDir, workspaceScopePrefix(workspaceId).replace(/\/$/, ""))));
-  if (fs.existsSync(memoryRootDir) && fs.statSync(memoryRootDir).isDirectory()) {
-    const entries = fs.readdirSync(memoryRootDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  files.push(...listMarkdownFiles(path.join(workspaceMemoryRootDir, "runtime")));
+  files.push(...listMarkdownFiles(path.join(workspaceMemoryRootDir, "knowledge")));
+  return files;
+}
+
+function globalMemoryFiles(globalMemoryRootDir: string): string[] {
+  const files: string[] = [];
+  const rootEntrypoint = path.join(globalMemoryRootDir, "MEMORY.md");
+  if (fs.existsSync(rootEntrypoint) && fs.statSync(rootEntrypoint).isFile()) {
+    files.push(rootEntrypoint);
+  }
+  if (fs.existsSync(globalMemoryRootDir) && fs.statSync(globalMemoryRootDir).isDirectory()) {
+    const entries = fs.readdirSync(globalMemoryRootDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name === "workspace") {
         continue;
       }
-      files.push(...listMarkdownFiles(path.join(memoryRootDir, entry.name)));
+      files.push(...listMarkdownFiles(path.join(globalMemoryRootDir, entry.name)));
     }
   }
   return files;
+}
+
+type ResolvedMemoryRoots = {
+  workspaceDir: string;
+  workspaceMemoryRootDir: string;
+  globalMemoryRootDir: string;
+  migratedWorkspaceMemory: boolean;
+};
+
+function resolveMemoryRoots(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+}): ResolvedMemoryRoots {
+  const workspaceDir = workspaceDirForWorkspaceId(params.workspaceRoot, params.workspaceId);
+  const migration = migrateLegacyWorkspaceMemoryIfNeeded({
+    workspaceRoot: params.workspaceRoot,
+    workspaceDir,
+    workspaceId: params.workspaceId,
+  });
+  return {
+    workspaceDir,
+    workspaceMemoryRootDir: workspaceMemoryDir(workspaceDir),
+    globalMemoryRootDir: globalMemoryDirForWorkspaceRoot(params.workspaceRoot),
+    migratedWorkspaceMemory: migration.migrated,
+  };
+}
+
+function workspaceScopedRelativePath(relPath: string, workspaceId: string): string | null {
+  const prefix = workspaceScopePrefix(workspaceId);
+  return relPath.startsWith(prefix) ? relPath.slice(prefix.length) : null;
+}
+
+function resolveMemoryTargetPath(params: {
+  normalizedPath: string;
+  workspaceId: string;
+  workspaceMemoryRootDir: string;
+  globalMemoryRootDir: string;
+}): { storageRoot: string; absolutePath: string } {
+  const workspaceRelativePath = workspaceScopedRelativePath(params.normalizedPath, params.workspaceId);
+  if (workspaceRelativePath !== null) {
+    return {
+      storageRoot: params.workspaceMemoryRootDir,
+      absolutePath: path.resolve(params.workspaceMemoryRootDir, workspaceRelativePath),
+    };
+  }
+  return {
+    storageRoot: params.globalMemoryRootDir,
+    absolutePath: path.resolve(params.globalMemoryRootDir, params.normalizedPath),
+  };
 }
 
 function relativePosixPath(root: string, targetPath: string): string {
@@ -289,10 +341,15 @@ function relativePosixPath(root: string, targetPath: string): string {
 function statusPayload(params: {
   workspaceDir: string;
   workspaceId: string;
-  memoryRootDir: string;
+  workspaceMemoryRootDir: string;
+  globalMemoryRootDir: string;
+  migratedWorkspaceMemory?: boolean;
 }): Record<string, unknown> {
   const backend = resolveMemoryBackend();
-  const files = memoryFiles(params.memoryRootDir, params.workspaceId);
+  const files = [
+    ...workspaceMemoryFiles(params.workspaceMemoryRootDir),
+    ...globalMemoryFiles(params.globalMemoryRootDir),
+  ];
   const payload: Record<string, unknown> = {
     backend: "builtin",
     provider: "filesystem",
@@ -307,8 +364,10 @@ function statusPayload(params: {
     sources: ["memory"],
     fallback: null,
     custom: {
-      memory_root_dir: params.memoryRootDir,
-      workspace_scope: workspaceScopePrefix(params.workspaceId).replace(/\/$/, "")
+      workspace_memory_root_dir: params.workspaceMemoryRootDir,
+      global_memory_root_dir: params.globalMemoryRootDir,
+      workspace_scope: workspaceScopePrefix(params.workspaceId).replace(/\/$/, ""),
+      migrated_workspace_memory: Boolean(params.migratedWorkspaceMemory),
     }
   };
   if (backend.requestedProvider && backend.fallbackReason) {
@@ -323,13 +382,28 @@ function statusPayload(params: {
 function capturePayload(params: {
   workspaceDir: string;
   workspaceId: string;
-  memoryRootDir: string;
+  workspaceMemoryRootDir: string;
+  globalMemoryRootDir: string;
+  migratedWorkspaceMemory?: boolean;
 }): Record<string, unknown> {
   const status = statusPayload(params);
   const files: Record<string, string> = {};
   let totalChars = 0;
-  for (const filePath of memoryFiles(params.memoryRootDir, params.workspaceId)) {
-    const relativePath = relativePosixPath(params.memoryRootDir, filePath);
+  for (const filePath of workspaceMemoryFiles(params.workspaceMemoryRootDir)) {
+    const relativePath = path.posix.join(
+      workspaceScopePrefix(params.workspaceId).replace(/\/$/, ""),
+      relativePosixPath(params.workspaceMemoryRootDir, filePath),
+    );
+    try {
+      const text = fs.readFileSync(filePath, "utf8");
+      files[relativePath] = text;
+      totalChars += text.length;
+    } catch {
+      // Ignore unreadable files in bundle capture.
+    }
+  }
+  for (const filePath of globalMemoryFiles(params.globalMemoryRootDir)) {
+    const relativePath = relativePosixPath(params.globalMemoryRootDir, filePath);
     try {
       const text = fs.readFileSync(filePath, "utf8");
       files[relativePath] = text;
@@ -363,11 +437,10 @@ export class FilesystemMemoryService implements MemoryServiceLike {
     const query = requiredString(payload.query, "query");
     const maxResults = optionalInteger(payload.max_results, 6);
     const minScore = optionalNumber(payload.min_score, 0.0);
-    const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
-    const memoryRootDir = resolveMemoryRootDir(workspaceDir);
+    const roots = resolveMemoryRoots({ workspaceRoot: this.#workspaceRoot, workspaceId });
     const results: Array<Record<string, unknown>> = [];
 
-    for (const filePath of memoryFiles(memoryRootDir, workspaceId)) {
+    for (const filePath of workspaceMemoryFiles(roots.workspaceMemoryRootDir)) {
       let text: string;
       try {
         text = fs.readFileSync(filePath, "utf8");
@@ -380,7 +453,33 @@ export class FilesystemMemoryService implements MemoryServiceLike {
       }
       const snippet = snippetForMatch(text, query);
       results.push({
-        path: relativePosixPath(memoryRootDir, filePath),
+        path: path.posix.join(
+          workspaceScopePrefix(workspaceId).replace(/\/$/, ""),
+          relativePosixPath(roots.workspaceMemoryRootDir, filePath),
+        ),
+        start_line: snippet.startLine,
+        end_line: snippet.endLine,
+        score,
+        snippet: snippet.snippet,
+        source: "memory",
+        citation: null
+      });
+    }
+
+    for (const filePath of globalMemoryFiles(roots.globalMemoryRootDir)) {
+      let text: string;
+      try {
+        text = fs.readFileSync(filePath, "utf8");
+      } catch {
+        continue;
+      }
+      const score = scoreText(query, text);
+      if (score < minScore) {
+        continue;
+      }
+      const snippet = snippetForMatch(text, query);
+      results.push({
+        path: relativePosixPath(roots.globalMemoryRootDir, filePath),
         start_line: snippet.startLine,
         end_line: snippet.endLine,
         score,
@@ -404,7 +503,13 @@ export class FilesystemMemoryService implements MemoryServiceLike {
 
     return {
       results: results.slice(0, Math.max(1, maxResults)),
-      status: statusPayload({ workspaceDir, workspaceId, memoryRootDir })
+      status: statusPayload({
+        workspaceDir: roots.workspaceDir,
+        workspaceId,
+        workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
+        globalMemoryRootDir: roots.globalMemoryRootDir,
+        migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
+      })
     };
   }
 
@@ -415,16 +520,23 @@ export class FilesystemMemoryService implements MemoryServiceLike {
     if (!isMemoryPath(normalized, workspaceId)) {
       throw new MemoryServiceError(400, MEMORY_ALLOWED_PATHS_MESSAGE);
     }
-    const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
-    const memoryRootDir = resolveMemoryRootDir(workspaceDir);
-    const target = path.resolve(memoryRootDir, normalized);
-    if (target !== memoryRootDir && !target.startsWith(`${memoryRootDir}${path.sep}`)) {
+    const roots = resolveMemoryRoots({ workspaceRoot: this.#workspaceRoot, workspaceId });
+    const resolvedTarget = resolveMemoryTargetPath({
+      normalizedPath: normalized,
+      workspaceId,
+      workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
+      globalMemoryRootDir: roots.globalMemoryRootDir,
+    });
+    if (
+      resolvedTarget.absolutePath !== resolvedTarget.storageRoot &&
+      !resolvedTarget.absolutePath.startsWith(`${resolvedTarget.storageRoot}${path.sep}`)
+    ) {
       throw new MemoryServiceError(400, "path escapes memory root");
     }
-    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+    if (!fs.existsSync(resolvedTarget.absolutePath) || !fs.statSync(resolvedTarget.absolutePath).isFile()) {
       return { path: normalized, text: "" };
     }
-    const text = fs.readFileSync(target, "utf8");
+    const text = fs.readFileSync(resolvedTarget.absolutePath, "utf8");
     return {
       path: normalized,
       text: readLineWindow(
@@ -444,48 +556,70 @@ export class FilesystemMemoryService implements MemoryServiceLike {
     }
     const content = typeof payload.content === "string" ? payload.content : "";
     const append = optionalBoolean(payload.append, false);
-    const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
-    const memoryRootDir = resolveMemoryRootDir(workspaceDir);
-    const target = path.resolve(memoryRootDir, normalized);
-    if (target !== memoryRootDir && !target.startsWith(`${memoryRootDir}${path.sep}`)) {
+    const roots = resolveMemoryRoots({ workspaceRoot: this.#workspaceRoot, workspaceId });
+    const resolvedTarget = resolveMemoryTargetPath({
+      normalizedPath: normalized,
+      workspaceId,
+      workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
+      globalMemoryRootDir: roots.globalMemoryRootDir,
+    });
+    if (
+      resolvedTarget.absolutePath !== resolvedTarget.storageRoot &&
+      !resolvedTarget.absolutePath.startsWith(`${resolvedTarget.storageRoot}${path.sep}`)
+    ) {
       throw new MemoryServiceError(400, "path escapes memory root");
     }
-    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.mkdirSync(path.dirname(resolvedTarget.absolutePath), { recursive: true });
 
-    if (append && fs.existsSync(target)) {
-      const existing = fs.readFileSync(target, "utf8");
+    if (append && fs.existsSync(resolvedTarget.absolutePath)) {
+      const existing = fs.readFileSync(resolvedTarget.absolutePath, "utf8");
       const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
-      fs.writeFileSync(target, `${existing}${prefix}${content}`, "utf8");
+      fs.writeFileSync(resolvedTarget.absolutePath, `${existing}${prefix}${content}`, "utf8");
     } else {
-      fs.writeFileSync(target, content, "utf8");
+      fs.writeFileSync(resolvedTarget.absolutePath, content, "utf8");
     }
     return {
       path: normalized,
-      text: fs.readFileSync(target, "utf8")
+      text: fs.readFileSync(resolvedTarget.absolutePath, "utf8")
     };
   }
 
   async status(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const workspaceId = requiredString(payload.workspace_id, "workspace_id");
-    const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
-    const memoryRootDir = resolveMemoryRootDir(workspaceDir);
-    return statusPayload({ workspaceDir, workspaceId, memoryRootDir });
+    const roots = resolveMemoryRoots({ workspaceRoot: this.#workspaceRoot, workspaceId });
+    return statusPayload({
+      workspaceDir: roots.workspaceDir,
+      workspaceId,
+      workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
+      globalMemoryRootDir: roots.globalMemoryRootDir,
+      migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
+    });
   }
 
   async sync(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const workspaceId = requiredString(payload.workspace_id, "workspace_id");
-    const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
-    const memoryRootDir = resolveMemoryRootDir(workspaceDir);
+    const roots = resolveMemoryRoots({ workspaceRoot: this.#workspaceRoot, workspaceId });
     return {
       success: true,
-      status: statusPayload({ workspaceDir, workspaceId, memoryRootDir })
+      status: statusPayload({
+        workspaceDir: roots.workspaceDir,
+        workspaceId,
+        workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
+        globalMemoryRootDir: roots.globalMemoryRootDir,
+        migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
+      })
     };
   }
 
   async capture(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const workspaceId = requiredString(payload.workspace_id, "workspace_id");
-    const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
-    const memoryRootDir = resolveMemoryRootDir(workspaceDir);
-    return capturePayload({ workspaceDir, workspaceId, memoryRootDir });
+    const roots = resolveMemoryRoots({ workspaceRoot: this.#workspaceRoot, workspaceId });
+    return capturePayload({
+      workspaceDir: roots.workspaceDir,
+      workspaceId,
+      workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
+      globalMemoryRootDir: roots.globalMemoryRootDir,
+      migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
+    });
   }
 }

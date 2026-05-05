@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  migrateLegacyWorkspaceStatePath,
+  workspaceRuntimeRelativePath,
+  workspaceStateRelativePath,
+} from "./workspace-bundle-paths.js";
 
-const SESSION_SCRATCHPAD_DIR_SEGMENTS = [".holaboss", "scratchpads"] as const;
+const SESSION_SCRATCHPAD_DIR_SEGMENTS = ["scratchpads"] as const;
 const SESSION_SCRATCHPAD_PREVIEW_CHARS = 280;
 
 export type SessionScratchpadWriteOperation = "append" | "replace" | "clear";
@@ -51,7 +56,7 @@ function sanitizeSessionScratchpadSegment(sessionId: string): string {
 }
 
 export function sessionScratchpadRelativePath(sessionId: string): string {
-  return path.posix.join(
+  return workspaceStateRelativePath(
     ...SESSION_SCRATCHPAD_DIR_SEGMENTS,
     `${sanitizeSessionScratchpadSegment(sessionId)}.md`,
   );
@@ -61,10 +66,20 @@ function sessionScratchpadAbsolutePath(params: {
   workspaceRoot: string;
   workspaceId: string;
   sessionId: string;
-}): { absolutePath: string; relativePath: string } {
+}): { absolutePath: string; legacyAbsolutePath: string; relativePath: string } {
   const relativePath = sessionScratchpadRelativePath(params.sessionId);
+  const workspaceDir = path.join(params.workspaceRoot, params.workspaceId);
+  const fileName = `${sanitizeSessionScratchpadSegment(params.sessionId)}.md`;
   return {
-    absolutePath: path.join(params.workspaceRoot, params.workspaceId, relativePath),
+    absolutePath: migrateLegacyWorkspaceStatePath({
+      workspaceDir,
+      relativeSegments: [...SESSION_SCRATCHPAD_DIR_SEGMENTS, fileName],
+      legacyRelativeSegments: [".holaboss", "scratchpads", fileName],
+    }),
+    legacyAbsolutePath: path.join(
+      workspaceDir,
+      workspaceRuntimeRelativePath("scratchpads", fileName),
+    ),
     relativePath,
   };
 }
@@ -75,7 +90,7 @@ export async function readSessionScratchpad(params: {
   sessionId: string;
   includeContent?: boolean;
 }): Promise<SessionScratchpadPayload> {
-  const { absolutePath, relativePath } = sessionScratchpadAbsolutePath(params);
+  const { absolutePath, legacyAbsolutePath, relativePath } = sessionScratchpadAbsolutePath(params);
   try {
     const stat = await fs.stat(absolutePath);
     if (!stat.isFile()) {
@@ -120,7 +135,7 @@ export async function writeSessionScratchpad(params: {
   op: SessionScratchpadWriteOperation;
   content?: string | null;
 }): Promise<SessionScratchpadPayload> {
-  const { absolutePath } = sessionScratchpadAbsolutePath(params);
+  const { absolutePath, legacyAbsolutePath } = sessionScratchpadAbsolutePath(params);
   if (params.op === "clear") {
     try {
       await fs.unlink(absolutePath);
@@ -129,6 +144,7 @@ export async function writeSessionScratchpad(params: {
         throw error;
       }
     }
+    await fs.rm(legacyAbsolutePath, { force: true }).catch(() => {});
     return readSessionScratchpad({
       workspaceRoot: params.workspaceRoot,
       workspaceId: params.workspaceId,
@@ -158,6 +174,7 @@ export async function writeSessionScratchpad(params: {
   const tempPath = `${absolutePath}.tmp`;
   await fs.writeFile(tempPath, resolvedContent, "utf8");
   await fs.rename(tempPath, absolutePath);
+  await fs.rm(legacyAbsolutePath, { force: true }).catch(() => {});
 
   return readSessionScratchpad({
     workspaceRoot: params.workspaceRoot,

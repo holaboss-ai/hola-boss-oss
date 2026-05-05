@@ -28,6 +28,10 @@ import {
   persistWorkspaceHarnessSessionId,
   readWorkspaceHarnessSessionId,
 } from "./ts-runner-session-state.js";
+import {
+  globalMemoryDirForWorkspaceRoot,
+  workspaceMemoryDir,
+} from "./workspace-bundle-paths.js";
 
 const ORIGINAL_SANDBOX_ROOT = process.env.HB_SANDBOX_ROOT;
 const ORIGINAL_EMBEDDED_SKILLS_DIR = process.env.HOLABOSS_EMBEDDED_SKILLS_DIR;
@@ -106,7 +110,11 @@ function writeMemoryFile(
   relPath: string,
   content: string,
 ): void {
-  const absPath = path.join(workspaceRoot, "memory", ...relPath.split("/"));
+  const normalized = relPath.replaceAll("\\", "/").replace(/^\/+/, "");
+  const match = /^workspace\/([^/]+)\/(.+)$/.exec(normalized);
+  const absPath = match
+    ? path.join(workspaceMemoryDir(path.join(workspaceRoot, match[1])), match[2])
+    : path.join(globalMemoryDirForWorkspaceRoot(workspaceRoot), ...normalized.split("/"));
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, content, "utf8");
 }
@@ -497,7 +505,7 @@ test("relayTsRunnerEvent persists harness_session_id from terminal events", asyn
   assert.deepEqual(
     JSON.parse(
       fs.readFileSync(
-        path.join(workspaceDir, ".holaboss", "harness-session-state.json"),
+        path.join(workspaceDir, ".holaboss", "state", "harness-session-state.json"),
         "utf8",
       ),
     ),
@@ -628,6 +636,7 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
           "workspace",
           "workspace-1",
           ".holaboss",
+          "state",
           "harness-session-state.json",
         ),
         "utf8",
@@ -746,6 +755,7 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
           "workspace",
           "workspace-1",
           ".holaboss",
+          "state",
           "harness-session-state.json",
         ),
         "utf8",
@@ -2608,6 +2618,7 @@ test("runTsRunnerCli loads legacy session history exports into main-session prom
   const legacyDir = path.join(
     workspaceDir,
     ".holaboss",
+    "state",
     "legacy-session-histories",
   );
   fs.mkdirSync(legacyDir, { recursive: true });
@@ -2684,7 +2695,7 @@ test("runTsRunnerCli loads legacy session history exports into main-session prom
   ).legacy_session_history_context;
   assert.equal(
     legacyContext.manifest_path,
-    ".holaboss/legacy-session-histories/index.json",
+    ".holaboss/state/legacy-session-histories/index.json",
   );
   assert.equal(legacyContext.legacy_session_count, 1);
   assert.deepEqual(legacyContext.entries, [
@@ -2695,8 +2706,8 @@ test("runTsRunnerCli loads legacy session history exports into main-session prom
       archived_at: "2026-04-24T06:52:27.419Z",
       message_count: 14,
       output_count: 1,
-      json_path: ".holaboss/legacy-session-histories/session-older.json",
-      markdown_path: ".holaboss/legacy-session-histories/session-older.md",
+      json_path: ".holaboss/state/legacy-session-histories/session-older.json",
+      markdown_path: ".holaboss/state/legacy-session-histories/session-older.md",
     },
   ]);
 });

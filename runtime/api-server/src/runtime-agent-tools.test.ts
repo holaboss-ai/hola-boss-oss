@@ -1096,7 +1096,7 @@ test("createDataTable writes rows into the shared workspace data.db", () => {
   assert.equal(result.table_name, "demo_dashboard_data");
   assert.equal(result.row_count, 3);
   assert.equal(result.column_count, 4);
-  assert.equal(result.db_path, ".holaboss/data.db");
+  assert.equal(result.db_path, ".holaboss/state/data.db");
   assert.equal(fs.existsSync(path.join(harness.workspaceDir, "data.db")), false);
 
   const tables = harness.service.listDataTables({ workspaceId: harness.workspaceId })
