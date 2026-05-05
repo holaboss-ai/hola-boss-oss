@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColorToken, TableColumnSpec, TableViewSpec } from "@/lib/dashboardSchema";
 
 import { EmptyState } from "./EmptyState";
+import { RowDetailDialog } from "./RowDetailDialog";
 import { isStatusColumn, StatusBadge } from "./StatusBadge";
 import {
   colorClasses,
@@ -90,6 +91,27 @@ export function TableView({
 
   const [shownLimit, setShownLimit] = useState(500);
   const displayRows = sortedRows.slice(0, shownLimit);
+
+  const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(
+    null,
+  );
+
+  const detailColumns = useMemo<
+    Array<{ name: string; label?: string; spec: TableColumnSpec | null }>
+  >(
+    () =>
+      visible.map((c) => ({
+        name: c.name,
+        label: c.spec?.label,
+        spec: c.spec,
+      })),
+    [visible],
+  );
+
+  const detailTitleColumn = useMemo(() => {
+    const heavy = visible.find((c) => TEXT_HEAVY_NAMES.has(c.name.toLowerCase()));
+    return heavy?.name ?? visible[0]?.name ?? null;
+  }, [visible]);
 
   const cycleSort = (column: string) => {
     setSort((prev) => {
@@ -234,7 +256,16 @@ export function TableView({
               // biome-ignore lint/suspicious/noArrayIndexKey: SQL row order is the natural key
               <tr
                 key={rIdx}
-                className="border-b border-border/40 transition-colors hover:bg-fg-4 last:border-b-0"
+                onClick={(e) => {
+                  if (
+                    e.target instanceof HTMLElement &&
+                    e.target.closest("a, button")
+                  ) {
+                    return;
+                  }
+                  setSelectedRow(rowObj);
+                }}
+                className="cursor-pointer border-b border-border/40 transition-colors hover:bg-fg-4 last:border-b-0"
               >
                 {visible.map((c) => (
                   <Cell key={c.name} column={c} value={row[c.index]} row={rowObj} />
@@ -259,6 +290,19 @@ export function TableView({
           </button>
         </div>
       ) : null}
+      <RowDetailDialog
+        open={selectedRow !== null}
+        onOpenChange={(next) => {
+          if (!next) setSelectedRow(null);
+        }}
+        title={
+          selectedRow && detailTitleColumn
+            ? String(selectedRow[detailTitleColumn] ?? "Details")
+            : "Details"
+        }
+        columns={detailColumns}
+        row={selectedRow ?? {}}
+      />
     </div>
   );
 }
