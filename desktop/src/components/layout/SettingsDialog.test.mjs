@@ -44,6 +44,7 @@ test("settings dialog settings section shows the app controls above appearance",
   const desktopUpdatesIndex = source.indexOf("Desktop updates");
   const betaUpdatesIndex = source.indexOf("Beta updates");
   const appearanceIndex = source.indexOf("Appearance");
+  const workspaceCardsPerRowIndex = source.indexOf("Workspace cards per row");
   const aboutSectionIndex = source.indexOf('activeSection === "about" ? (');
 
   assert.notEqual(settingsSectionIndex, -1);
@@ -51,11 +52,13 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.notEqual(desktopUpdatesIndex, -1);
   assert.notEqual(betaUpdatesIndex, -1);
   assert.notEqual(appearanceIndex, -1);
+  assert.notEqual(workspaceCardsPerRowIndex, -1);
   assert.notEqual(aboutSectionIndex, -1);
   assert.ok(settingsSectionIndex < appLabelIndex);
   assert.ok(appLabelIndex < desktopUpdatesIndex);
   assert.ok(desktopUpdatesIndex < betaUpdatesIndex);
   assert.ok(betaUpdatesIndex < appearanceIndex);
+  assert.ok(appearanceIndex < workspaceCardsPerRowIndex);
   assert.ok(appearanceIndex < aboutSectionIndex);
   assert.match(source, /v\{displayAppVersion\}/);
   assert.match(source, /aria-live="polite"/);
@@ -66,6 +69,15 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.match(source, /Restarting\.\.\./);
   assert.match(source, /Opt into beta desktop releases before they reach the stable channel\./);
   assert.match(source, /<SettingsToggle[\s\S]*checked=\{betaChannelEnabled\}/);
+  assert.match(source, /workspaceCardsPerRow: ControlCenterCardsPerRow;/);
+  assert.match(source, /onWorkspaceCardsPerRowChange: \(value: ControlCenterCardsPerRow\) => void;/);
+  assert.match(source, /label="Workspace cards per row"/);
+  assert.match(source, /Choose how many control center cards to fit on each row when the window is wide enough\./);
+  assert.match(source, /value=\{String\(workspaceCardsPerRow\)\}/);
+  assert.match(source, /onWorkspaceCardsPerRowChange\(\s*Number\(value\) as ControlCenterCardsPerRow,/);
+  assert.match(source, /value: "2",[\s\S]*Comfortable, larger previews\./);
+  assert.match(source, /value: "3",[\s\S]*Balanced density\./);
+  assert.match(source, /value: "4",[\s\S]*Dense, smaller cards\./);
 });
 
 test("settings nav drops the automations section now that it lives in the chat pane", async () => {

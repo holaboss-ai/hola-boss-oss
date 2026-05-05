@@ -11,6 +11,7 @@ import type { BoardViewSpec, ColorToken } from "@/lib/dashboardSchema";
 
 import { EmptyState } from "./EmptyState";
 import { colorClasses, formatSmartDate, hashToColor, looksLikeDateColumn } from "./format";
+import { RowDetailDialog } from "./RowDetailDialog";
 import { isStatusColumn, StatusBadge } from "./StatusBadge";
 import { usePersistedState } from "./usePersistedState";
 
@@ -58,6 +59,15 @@ export function BoardView({
   const groupableColumns = useMemo(
     () => candidateGroupColumns(columns, view),
     [columns, view],
+  );
+
+  const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(
+    null,
+  );
+
+  const detailColumns = useMemo(
+    () => columns.map((name) => ({ name })),
+    [columns],
   );
 
   if (titleIdx < 0) {
@@ -166,7 +176,26 @@ export function BoardView({
                 // biome-ignore lint/suspicious/noArrayIndexKey: SQL row order is the natural key
                 <article
                   key={rIdx}
-                  className="rounded-md border border-transparent bg-fg-4 px-3 py-2.5 text-xs transition-colors hover:border-border hover:bg-card"
+                  onClick={() => {
+                    const obj: Record<string, unknown> = {};
+                    for (let i = 0; i < columns.length; i += 1) {
+                      obj[columns[i]] = row[i];
+                    }
+                    setSelectedRow(obj);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      const obj: Record<string, unknown> = {};
+                      for (let i = 0; i < columns.length; i += 1) {
+                        obj[columns[i]] = row[i];
+                      }
+                      setSelectedRow(obj);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className="cursor-pointer rounded-md border border-transparent bg-fg-4 px-3 py-2.5 text-xs transition-colors hover:border-border hover:bg-card focus-visible:border-border focus-visible:bg-card focus-visible:outline-none"
                 >
                   <div className="line-clamp-3 leading-snug text-foreground">
                     {formatCell(row[titleIdx])}
@@ -202,6 +231,24 @@ export function BoardView({
           </div>
         ))}
       </div>
+      <RowDetailDialog
+        open={selectedRow !== null}
+        onOpenChange={(next) => {
+          if (!next) setSelectedRow(null);
+        }}
+        title={
+          selectedRow
+            ? formatCell(selectedRow[view.card_title]) || "Details"
+            : "Details"
+        }
+        subtitle={
+          selectedRow && view.card_subtitle
+            ? formatCell(selectedRow[view.card_subtitle])
+            : undefined
+        }
+        columns={detailColumns}
+        row={selectedRow ?? {}}
+      />
     </div>
   );
 }

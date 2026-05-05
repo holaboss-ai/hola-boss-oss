@@ -25,6 +25,7 @@ import {
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
+import { WorkspaceControlCenter } from "@/components/layout/WorkspaceControlCenter";
 import { WorkspaceAppsDialog } from "@/components/layout/WorkspaceAppsDialog";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
@@ -78,6 +79,10 @@ const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
 const SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY =
   "holaboss-space-workspace-panel-collapsed-v1";
+const CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY =
+  "holaboss-control-center-cards-per-row-v1";
+const CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY =
+  "holaboss-control-center-workspace-card-order-v1";
 const THEMES = [
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -130,7 +135,7 @@ type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
 type SpaceExplorerMode = "files" | "browser" | "applications";
-type ShellView = "space";
+type ShellView = "control_center" | "space";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -197,9 +202,16 @@ function isThemeVariant(value: string): value is ThemeVariant {
 }
 
 export type ColorScheme = "system" | "light" | "dark";
+export type ControlCenterCardsPerRow = 2 | 3 | 4;
 
 function isColorScheme(value: string): value is ColorScheme {
   return value === "system" || value === "light" || value === "dark";
+}
+
+function isControlCenterCardsPerRow(
+  value: number,
+): value is ControlCenterCardsPerRow {
+  return value === 2 || value === 3 || value === 4;
 }
 
 const COLOR_SCHEME_STORAGE_KEY = "holaboss-color-scheme";
@@ -843,6 +855,40 @@ function loadSpaceWorkspacePanelCollapsed(): boolean {
   return false;
 }
 
+function loadControlCenterCardsPerRow(): ControlCenterCardsPerRow {
+  try {
+    const raw = localStorage.getItem(CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY);
+    const parsed = Number(raw);
+    if (isControlCenterCardsPerRow(parsed)) {
+      return parsed;
+    }
+  } catch {
+    // ignore invalid persisted control center layout state
+  }
+
+  return 3;
+}
+
+function loadControlCenterWorkspaceCardOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(
+      CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,
+    );
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function loadOperationsDrawerOpen(): boolean {
   try {
     const raw = localStorage.getItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY);
@@ -1381,7 +1427,8 @@ function AppShellContent() {
     createWorkspacePanelAnchorWorkspaceId,
     setCreateWorkspacePanelAnchorWorkspaceId,
   ] = useState("");
-  const [activeShellView, setActiveShellView] = useState<ShellView>("space");
+  const [activeShellView, setActiveShellView] =
+    useState<ShellView>("control_center");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
@@ -1432,6 +1479,8 @@ function AppShellContent() {
   );
   const [browserPaneWidth, setBrowserPaneWidth] =
     useState(loadBrowserPaneWidth);
+  const [controlCenterCardsPerRow, setControlCenterCardsPerRow] =
+    useState<ControlCenterCardsPerRow>(loadControlCenterCardsPerRow);
   const [isUtilityPaneResizing, setIsUtilityPaneResizing] = useState(false);
   const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(
     loadOperationsDrawerOpen,
@@ -1495,10 +1544,20 @@ function AppShellContent() {
   const [toastNotifications, setToastNotifications] = useState<
     RuntimeNotificationRecordPayload[]
   >([]);
+  const [controlCenterVisibleWorkspaceIds, setControlCenterVisibleWorkspaceIds] =
+    useState<string[]>([]);
+  const [
+    controlCenterHighlightedWorkspaceIds,
+    setControlCenterHighlightedWorkspaceIds,
+  ] = useState<string[]>([]);
   const [taskProposalToastNotifications, setTaskProposalToastNotifications] =
     useState<RuntimeNotificationRecordPayload[]>([]);
   const [devNotificationToastPreview, setDevNotificationToastPreview] =
     useState<RuntimeNotificationRecordPayload[]>([]);
+  const [
+    controlCenterWorkspaceCardOrder,
+    setControlCenterWorkspaceCardOrder,
+  ] = useState<string[]>(() => loadControlCenterWorkspaceCardOrder());
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const reportedOperatorSurfaceWorkspaceIdRef = useRef<string | null>(null);
@@ -1507,6 +1566,9 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
+  const controlCenterCardComposerSubmissionWorkspaceIdsRef = useRef(
+    new Set<string>(),
+  );
   const nativeRuntimeNotificationAttemptedAtRef = useRef(
     new Map<string, number>(),
   );
@@ -1593,6 +1655,53 @@ function AppShellContent() {
       toastNotifications,
     ],
   );
+  const controlCenterVisibleWorkspaceIdSet = useMemo(
+    () =>
+      new Set(
+        controlCenterVisibleWorkspaceIds
+          .map((workspaceId) => workspaceId.trim())
+          .filter(Boolean),
+      ),
+    [controlCenterVisibleWorkspaceIds],
+  );
+
+  useEffect(() => {
+    const activeWorkspaceIds = new Set(
+      workspaces
+        .map((workspace) => workspace.id.trim())
+        .filter(Boolean),
+    );
+    setControlCenterHighlightedWorkspaceIds((current) => {
+      const next = current.filter((workspaceId) =>
+        activeWorkspaceIds.has(workspaceId),
+      );
+      return next.length === current.length ? current : next;
+    });
+    setControlCenterVisibleWorkspaceIds((current) => {
+      const next = current.filter((workspaceId) =>
+        activeWorkspaceIds.has(workspaceId),
+      );
+      return next.length === current.length ? current : next;
+    });
+    setControlCenterWorkspaceCardOrder((current) => {
+      const next = current.filter((workspaceId, index) => {
+        if (!activeWorkspaceIds.has(workspaceId)) {
+          return false;
+        }
+        return current.indexOf(workspaceId) === index;
+      });
+      return next.length === current.length ? current : next;
+    });
+    for (const workspaceId of [
+      ...controlCenterCardComposerSubmissionWorkspaceIdsRef.current,
+    ]) {
+      if (!activeWorkspaceIds.has(workspaceId)) {
+        controlCenterCardComposerSubmissionWorkspaceIdsRef.current.delete(
+          workspaceId,
+        );
+      }
+    }
+  }, [workspaces]);
   const runtimeNotificationById = useMemo(
     () =>
       new Map(
@@ -2185,6 +2294,26 @@ function AppShellContent() {
           continue;
         }
 
+        const normalizedNotificationWorkspaceId = item.workspace_id.trim();
+        const isVisibleControlCenterMainSessionNotification =
+          activeShellView === "control_center" &&
+          item.source_type === "main_session" &&
+          Boolean(normalizedNotificationWorkspaceId) &&
+          controlCenterVisibleWorkspaceIdSet.has(
+            normalizedNotificationWorkspaceId,
+          );
+        const consumeControlCenterComposerSubmissionSuppression = () => {
+          if (
+            item.source_type !== "main_session" ||
+            !normalizedNotificationWorkspaceId
+          ) {
+            return false;
+          }
+          return controlCenterCardComposerSubmissionWorkspaceIdsRef.current.delete(
+            normalizedNotificationWorkspaceId,
+          );
+        };
+
         if (
           shouldShowNativeRuntimeNotification(item, isWindowMinimized)
         ) {
@@ -2201,6 +2330,7 @@ function AppShellContent() {
             sessionId: notificationTargetSessionId(item),
           });
           if (shown) {
+            consumeControlCenterComposerSubmissionSuppression();
             seenNotificationIdsRef.current.add(item.id);
             nativeRuntimeNotificationAttemptedAtRef.current.delete(item.id);
             try {
@@ -2214,7 +2344,30 @@ function AppShellContent() {
           continue;
         }
 
+        if (isVisibleControlCenterMainSessionNotification) {
+          const suppressHighlight =
+            consumeControlCenterComposerSubmissionSuppression();
+          seenNotificationIdsRef.current.add(item.id);
+          if (!suppressHighlight) {
+            setControlCenterHighlightedWorkspaceIds((current) => {
+              if (current.includes(normalizedNotificationWorkspaceId)) {
+                return current;
+              }
+              return [normalizedNotificationWorkspaceId, ...current];
+            });
+          }
+          try {
+            await window.electronAPI.workspace.updateNotification(item.id, {
+              state: "dismissed",
+            });
+          } catch {
+            // Ignore transient dismissal failures in the shell.
+          }
+          continue;
+        }
+
         if (shouldDismissVisibleRuntimeNotification(item, selectedWorkspaceId)) {
+          consumeControlCenterComposerSubmissionSuppression();
           seenNotificationIdsRef.current.add(item.id);
           try {
             await window.electronAPI.workspace.updateNotification(item.id, {
@@ -2230,6 +2383,7 @@ function AppShellContent() {
           continue;
         }
 
+        consumeControlCenterComposerSubmissionSuppression();
         seenNotificationIdsRef.current.add(item.id);
         setToastNotifications((current) => {
           if (current.some((existing) => existing.id === item.id)) {
@@ -2241,7 +2395,11 @@ function AppShellContent() {
     } catch {
       // Notification polling should stay silent when the runtime is restarting.
     }
-  }, [selectedWorkspaceId]);
+  }, [
+    activeShellView,
+    controlCenterVisibleWorkspaceIdSet,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
     const activeNotificationIds = new Set(
@@ -2532,6 +2690,9 @@ function AppShellContent() {
       return;
     }
     if (selectedWorkspaceId !== createWorkspacePanelAnchorWorkspaceId) {
+      setActiveShellView("space");
+      setAgentView({ type: "chat" });
+      setChatFocusRequestKey((current) => current + 1);
       setCreateWorkspacePanelOpen(false);
       setCreateWorkspacePanelAnchorWorkspaceId("");
     }
@@ -2579,6 +2740,20 @@ function AppShellContent() {
       String(browserPaneWidth),
     );
   }, [browserPaneWidth]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY,
+      String(controlCenterCardsPerRow),
+    );
+  }, [controlCenterCardsPerRow]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,
+      JSON.stringify(controlCenterWorkspaceCardOrder),
+    );
+  }, [controlCenterWorkspaceCardOrder]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -3332,6 +3507,136 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, []);
 
+  const handleOpenControlCenter = useCallback(() => {
+    setActiveShellView("control_center");
+  }, []);
+
+  const clearControlCenterWorkspaceHighlight = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      setControlCenterHighlightedWorkspaceIds((current) => {
+        if (!current.includes(normalizedWorkspaceId)) {
+          return current;
+        }
+        return current.filter((item) => item !== normalizedWorkspaceId);
+      });
+    },
+    [],
+  );
+
+  const handleControlCenterVisibleWorkspaceIdsChange = useCallback(
+    (workspaceIds: string[]) => {
+      const nextWorkspaceIds = workspaceIds
+        .map((workspaceId) => workspaceId.trim())
+        .filter(Boolean);
+      setControlCenterVisibleWorkspaceIds((current) =>
+        current.length === nextWorkspaceIds.length &&
+        current.every((workspaceId, index) => workspaceId === nextWorkspaceIds[index])
+          ? current
+          : nextWorkspaceIds,
+      );
+    },
+    [],
+  );
+
+  const handleMarkControlCenterWorkspaceComposerSubmission = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      controlCenterCardComposerSubmissionWorkspaceIdsRef.current.add(
+        normalizedWorkspaceId,
+      );
+      clearControlCenterWorkspaceHighlight(normalizedWorkspaceId);
+    },
+    [clearControlCenterWorkspaceHighlight],
+  );
+
+  const handleControlCenterWorkspaceCompletion = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (
+        !normalizedWorkspaceId ||
+        activeShellView !== "control_center" ||
+        !controlCenterVisibleWorkspaceIdSet.has(normalizedWorkspaceId)
+      ) {
+        return;
+      }
+      const suppressHighlight =
+        controlCenterCardComposerSubmissionWorkspaceIdsRef.current.delete(
+          normalizedWorkspaceId,
+        );
+      if (suppressHighlight) {
+        return;
+      }
+      setControlCenterHighlightedWorkspaceIds((current) => {
+        if (current.includes(normalizedWorkspaceId)) {
+          return current;
+        }
+        return [normalizedWorkspaceId, ...current];
+      });
+    },
+    [activeShellView, controlCenterVisibleWorkspaceIdSet],
+  );
+
+  const handleControlCenterWorkspaceOrderChange = useCallback(
+    (workspaceIds: string[]) => {
+      const nextWorkspaceIds = workspaceIds
+        .map((workspaceId) => workspaceId.trim())
+        .filter(Boolean);
+      setControlCenterWorkspaceCardOrder((current) =>
+        current.length === nextWorkspaceIds.length &&
+        current.every((workspaceId, index) => workspaceId === nextWorkspaceIds[index])
+          ? current
+          : nextWorkspaceIds,
+      );
+    },
+    [],
+  );
+
+  const handleSelectControlCenterWorkspace = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      clearControlCenterWorkspaceHighlight(normalizedWorkspaceId);
+      setSelectedWorkspaceId(normalizedWorkspaceId);
+    },
+    [clearControlCenterWorkspaceHighlight, setSelectedWorkspaceId],
+  );
+
+  const handleEnterWorkspace = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+
+      clearControlCenterWorkspaceHighlight(normalizedWorkspaceId);
+      if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
+
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [
+      clearControlCenterWorkspaceHighlight,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+    ],
+  );
+
   const handleChatComposerDraftTextChange = useCallback(
     (text: string) => {
       const workspaceId = selectedWorkspaceId?.trim() || "";
@@ -3863,9 +4168,11 @@ function AppShellContent() {
     [handleSyncAgentOperationFileDisplay],
   );
 
-  const handleOpenWorkspaceOutput = useCallback(
-    (output: WorkspaceOutputRecordPayload) => {
-      const target = workspaceOutputNavigationTarget(output, installedAppIds);
+  const openWorkspaceOutputTarget = useCallback(
+    (
+      target: WorkspaceOutputNavigationTarget,
+      output: WorkspaceOutputRecordPayload,
+    ) => {
       if (target.type === "app") {
         handleOpenSpaceApp(target.appId, {
           path: target.path,
@@ -3917,7 +4224,54 @@ function AppShellContent() {
         });
       }
     },
-    [handleOpenSpaceApp, installedAppIds],
+    [handleOpenSpaceApp],
+  );
+
+  const handleOpenWorkspaceOutput = useCallback(
+    (output: WorkspaceOutputRecordPayload) => {
+      const target = workspaceOutputNavigationTarget(output, installedAppIds);
+      openWorkspaceOutputTarget(target, output);
+    },
+    [installedAppIds, openWorkspaceOutputTarget],
+  );
+
+  const handleOpenControlCenterWorkspaceOutput = useCallback(
+    async (workspaceId: string, output: WorkspaceOutputRecordPayload) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+
+      let workspaceInstalledAppIds = installedAppIds;
+      if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
+        try {
+          const lifecycle =
+            await window.electronAPI.workspace.getWorkspaceLifecycle(
+              normalizedWorkspaceId,
+            );
+          workspaceInstalledAppIds = new Set(
+            lifecycle.applications
+              .map((application) => application.app_id.trim())
+              .filter(Boolean),
+          );
+        } catch {
+          workspaceInstalledAppIds = new Set<string>();
+        }
+        setSelectedWorkspaceId(normalizedWorkspaceId);
+      }
+
+      const target = workspaceOutputNavigationTarget(
+        output,
+        workspaceInstalledAppIds,
+      );
+      openWorkspaceOutputTarget(target, output);
+    },
+    [
+      installedAppIds,
+      openWorkspaceOutputTarget,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+    ],
   );
 
   const handleOpenRunningSession = (sessionId: string) => {
@@ -3939,6 +4293,7 @@ function AppShellContent() {
     });
   };
 
+  const controlCenterMode = activeShellView === "control_center";
   const spaceMode = activeShellView === "space";
   const activeAppId =
     agentView.type === "app"
@@ -3996,7 +4351,8 @@ function AppShellContent() {
     hasHydratedWorkspaceList &&
     hasWorkspaces &&
     hasSelectedWorkspace &&
-    onboardingModeActive;
+    onboardingModeActive &&
+    spaceMode;
 
   const agentContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
@@ -4453,24 +4809,32 @@ function AppShellContent() {
     [filesPaneWidth],
   );
 
+  const hasVisibleSpacePanes = visibleSpacePaneIds.length > 0;
   useEffect(() => {
     if (!spaceMode) {
       return;
     }
 
-    const syncDisplayWidth = () => {
+    let frame: number | null = null;
+    const flush = () => {
+      frame = null;
       setSpaceAgentPaneWidth((current) => clampSpaceAgentPaneWidth(current));
+      if (hasVisibleSpacePanes) {
+        syncUtilityPaneWidths();
+      }
+    };
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(flush);
     };
 
-    syncDisplayWidth();
-    window.addEventListener("resize", syncDisplayWidth);
+    flush();
+    window.addEventListener("resize", schedule);
 
     const host = utilityPaneHostRef.current;
     const observer =
       host && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            syncDisplayWidth();
-          })
+        ? new ResizeObserver(schedule)
         : null;
     if (observer && host) {
       observer.observe(host);
@@ -4478,9 +4842,17 @@ function AppShellContent() {
 
     return () => {
       observer?.disconnect();
-      window.removeEventListener("resize", syncDisplayWidth);
+      window.removeEventListener("resize", schedule);
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
     };
-  }, [clampSpaceAgentPaneWidth, spaceMode]);
+  }, [
+    clampSpaceAgentPaneWidth,
+    hasVisibleSpacePanes,
+    spaceMode,
+    syncUtilityPaneWidths,
+  ]);
 
   const startSpaceDisplayResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4639,30 +5011,6 @@ function AppShellContent() {
     [browserPaneWidth, filesPaneWidth, spaceVisibility],
   );
 
-  useEffect(() => {
-    if (visibleSpacePaneIds.length === 0) {
-      return;
-    }
-
-    syncUtilityPaneWidths();
-    window.addEventListener("resize", syncUtilityPaneWidths);
-
-    const host = utilityPaneHostRef.current;
-    const observer =
-      host && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            syncUtilityPaneWidths();
-          })
-        : null;
-    if (observer && host) {
-      observer.observe(host);
-    }
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", syncUtilityPaneWidths);
-    };
-  }, [syncUtilityPaneWidths, visibleSpacePaneIds.length]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -4766,6 +5114,8 @@ function AppShellContent() {
               integratedTitleBar={hasIntegratedTitleBar}
               desktopPlatform={desktopPlatform}
               runtimeStatus={runtimeStatus}
+              controlCenterActive={controlCenterMode}
+              onOpenControlCenter={handleOpenControlCenter}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
@@ -4798,6 +5148,26 @@ function AppShellContent() {
           <FirstWorkspacePane />
         ) : showOnboardingTakeover ? (
           <WorkspaceOnboardingTakeover focusRequestKey={chatFocusRequestKey} />
+        ) : controlCenterMode ? (
+          <WorkspaceControlCenter
+            workspaces={workspaces}
+            selectedWorkspaceId={selectedWorkspaceId}
+            cardsPerRow={controlCenterCardsPerRow}
+            composerModel={currentComposerSelectedModel(runtimeConfig)}
+            orderedWorkspaceIds={controlCenterWorkspaceCardOrder}
+            highlightedWorkspaceIds={controlCenterHighlightedWorkspaceIds}
+            onSelectWorkspace={handleSelectControlCenterWorkspace}
+            onEnterWorkspace={handleEnterWorkspace}
+            onOpenOutput={handleOpenControlCenterWorkspaceOutput}
+            onWorkspaceOrderChange={handleControlCenterWorkspaceOrderChange}
+            onVisibleWorkspaceIdsChange={
+              handleControlCenterVisibleWorkspaceIdsChange
+            }
+            onCardComposerSubmit={
+              handleMarkControlCenterWorkspaceComposerSubmission
+            }
+            onWorkspaceCompletion={handleControlCenterWorkspaceCompletion}
+          />
         ) : (
           <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-hidden">
@@ -5038,6 +5408,8 @@ function AppShellContent() {
         themeVariant={themeVariant}
         themeVariants={THEME_VARIANTS}
         onThemeVariantChange={handleThemeVariantChange}
+        workspaceCardsPerRow={controlCenterCardsPerRow}
+        onWorkspaceCardsPerRowChange={setControlCenterCardsPerRow}
         onOpenExternalUrl={handleOpenExternalUrl}
         submissionsFocusId={submissionsFocusId}
       />

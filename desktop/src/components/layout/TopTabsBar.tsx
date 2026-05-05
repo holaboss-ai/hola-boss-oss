@@ -51,6 +51,8 @@ interface TopTabsBarProps {
   integratedTitleBar?: boolean;
   desktopPlatform?: string | null;
   runtimeStatus?: RuntimeStatusPayload | null;
+  controlCenterActive?: boolean;
+  onOpenControlCenter?: () => void;
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
   onOpenWorkspaceCreatePanel?: () => void;
   onOpenSettings?: () => void;
@@ -64,6 +66,8 @@ export function TopTabsBar({
   integratedTitleBar = false,
   desktopPlatform = null,
   runtimeStatus = null,
+  controlCenterActive = false,
+  onOpenControlCenter,
   onWorkspaceSwitcherVisibilityChange,
   onOpenWorkspaceCreatePanel,
   onOpenSettings,
@@ -189,6 +193,13 @@ export function TopTabsBar({
   }, [onWorkspaceSwitcherVisibilityChange, workspaceSwitcherOpen]);
 
   useEffect(() => {
+    if (!controlCenterActive || !workspaceSwitcherOpen) {
+      return;
+    }
+    closeWorkspaceSwitcher();
+  }, [controlCenterActive, workspaceSwitcherOpen]);
+
+  useEffect(() => {
     if (!isWindowsIntegratedTitleBar) {
       return;
     }
@@ -246,11 +257,23 @@ export function TopTabsBar({
 
     updateWorkspaceSwitcherPosition();
 
-    const syncPosition = () => updateWorkspaceSwitcherPosition();
+    let rafId: number | null = null;
+    const syncPosition = () => {
+      if (rafId !== null) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        updateWorkspaceSwitcherPosition();
+      });
+    };
     window.addEventListener("resize", syncPosition);
     window.addEventListener("scroll", syncPosition, true);
 
     return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
       window.removeEventListener("resize", syncPosition);
       window.removeEventListener("scroll", syncPosition, true);
     };
@@ -284,6 +307,17 @@ export function TopTabsBar({
         <div
           className={`${integratedTitleBar ? "window-no-drag " : ""}flex min-w-0 items-center justify-self-end gap-1.5`}
         >
+          {!controlCenterActive ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenControlCenter?.()}
+              className="h-7 shrink-0 rounded-full px-2.5 text-xs"
+            >
+              <Home className="size-3.5" />
+              Control Center
+            </Button>
+          ) : null}
           {isBillingAvailable ? (
             <CreditsPill
               balance={overview?.creditsBalance ?? 0}
@@ -292,39 +326,41 @@ export function TopTabsBar({
               onClick={() => onOpenBilling?.()}
             />
           ) : null}
-          <div
-            ref={workspaceSwitcherRef}
-            className={workspaceSwitcherContainerClassName}
-          >
-            <Button
-              ref={workspaceSwitcherButtonRef}
-              variant="outline"
-              size="sm"
-              aria-expanded={workspaceSwitcherOpen}
-              onClick={() => {
-                setWorkspaceSwitcherOpen((open) => {
-                  const nextOpen = !open;
-                  if (!nextOpen) {
-                    setWorkspaceQuery("");
-                  } else {
-                    requestAnimationFrame(() => {
-                      updateWorkspaceSwitcherPosition();
-                    });
-                  }
-                  return nextOpen;
-                });
-              }}
-              className={workspaceSwitcherButtonClassName}
+          {!controlCenterActive ? (
+            <div
+              ref={workspaceSwitcherRef}
+              className={workspaceSwitcherContainerClassName}
             >
-              <FolderKanban className="size-3.5 shrink-0 text-primary" />
-              <span className="min-w-0 truncate text-left font-medium">
-                {selectedWorkspace?.name || "Select workspace"}
-              </span>
-              <ChevronDown
-                className={`ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
-              />
-            </Button>
-          </div>
+              <Button
+                ref={workspaceSwitcherButtonRef}
+                variant="outline"
+                size="sm"
+                aria-expanded={workspaceSwitcherOpen}
+                onClick={() => {
+                  setWorkspaceSwitcherOpen((open) => {
+                    const nextOpen = !open;
+                    if (!nextOpen) {
+                      setWorkspaceQuery("");
+                    } else {
+                      requestAnimationFrame(() => {
+                        updateWorkspaceSwitcherPosition();
+                      });
+                    }
+                    return nextOpen;
+                  });
+                }}
+                className={workspaceSwitcherButtonClassName}
+              >
+                <FolderKanban className="size-3.5 shrink-0 text-primary" />
+                <span className="min-w-0 truncate text-left font-medium">
+                  {selectedWorkspace?.name || "Select workspace"}
+                </span>
+                <ChevronDown
+                  className={`ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
+                />
+              </Button>
+            </div>
+          ) : null}
           <RuntimeStatusIndicator status={runtimeStatus} />
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -423,7 +459,8 @@ export function TopTabsBar({
         </div>
       ) : null}
 
-      {workspaceSwitcherOpen &&
+      {!controlCenterActive &&
+      workspaceSwitcherOpen &&
       workspaceSwitcherPosition &&
       typeof document !== "undefined"
         ? createPortal(

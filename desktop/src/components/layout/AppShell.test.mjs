@@ -141,6 +141,114 @@ test("app shell passes the current app version into the settings dialog", async 
     source,
     /<SettingsDialog[\s\S]*appVersion=\{effectiveAppUpdateStatus\?\.currentVersion \|\| ""\}/,
   );
+  assert.match(
+    source,
+    /<SettingsDialog[\s\S]*workspaceCardsPerRow=\{controlCenterCardsPerRow\}[\s\S]*onWorkspaceCardsPerRowChange=\{setControlCenterCardsPerRow\}/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*composerModel=\{currentComposerSelectedModel\(runtimeConfig\)\}/,
+  );
+});
+
+test("app shell persists and passes custom control-center workspace card ordering", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY =\s*"holaboss-control-center-workspace-card-order-v1";/,
+  );
+  assert.match(
+    source,
+    /function loadControlCenterWorkspaceCardOrder\(\): string\[] \{/,
+  );
+  assert.match(
+    source,
+    /localStorage\.getItem\(\s*CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const \[\s*controlCenterWorkspaceCardOrder,\s*setControlCenterWorkspaceCardOrder,\s*\] = useState<string\[]>\(\(\) => loadControlCenterWorkspaceCardOrder\(\)\);/,
+  );
+  assert.match(
+    source,
+    /localStorage\.setItem\(\s*CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,\s*JSON\.stringify\(controlCenterWorkspaceCardOrder\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /setControlCenterWorkspaceCardOrder\(\(current\) => \{\s*const next = current\.filter\(\(workspaceId, index\) => \{/,
+  );
+  assert.match(source, /return current\.indexOf\(workspaceId\) === index;/);
+  assert.match(
+    source,
+    /const handleControlCenterWorkspaceOrderChange = useCallback\(\s*\(workspaceIds: string\[]\) => \{/,
+  );
+  assert.match(
+    source,
+    /setControlCenterWorkspaceCardOrder\(\(current\) =>\s*current\.length === nextWorkspaceIds\.length &&\s*current\.every\(\(workspaceId, index\) => workspaceId === nextWorkspaceIds\[index\]\)\s*\?\s*current\s*:\s*nextWorkspaceIds,\s*\);/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*orderedWorkspaceIds=\{controlCenterWorkspaceCardOrder\}/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*onWorkspaceOrderChange=\{handleControlCenterWorkspaceOrderChange\}/,
+  );
+});
+
+test("app shell suppresses visible control-center completion toasts in favor of card highlights", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const \[controlCenterVisibleWorkspaceIds, setControlCenterVisibleWorkspaceIds\] =\s*useState<string\[]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /const \[\s*controlCenterHighlightedWorkspaceIds,\s*setControlCenterHighlightedWorkspaceIds,\s*\] =\s*useState<string\[]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /const controlCenterCardComposerSubmissionWorkspaceIdsRef = useRef\(\s*new Set<string>\(\),\s*\);/,
+  );
+  assert.match(source, /const controlCenterVisibleWorkspaceIdSet = useMemo\(/);
+  assert.match(
+    source,
+    /const handleControlCenterVisibleWorkspaceIdsChange = useCallback\(\s*\(workspaceIds: string\[]\) => \{/,
+  );
+  assert.match(
+    source,
+    /const handleMarkControlCenterWorkspaceComposerSubmission = useCallback\(\s*\(workspaceId: string\) => \{/,
+  );
+  assert.match(
+    source,
+    /const handleControlCenterWorkspaceCompletion = useCallback\(\s*\(workspaceId: string\) => \{/,
+  );
+  assert.match(
+    source,
+    /const clearControlCenterWorkspaceHighlight = useCallback\(\s*\(workspaceId: string\) => \{/,
+  );
+  assert.match(
+    source,
+    /const isVisibleControlCenterMainSessionNotification =\s*activeShellView === "control_center"[\s\S]*item\.source_type === "main_session"[\s\S]*controlCenterVisibleWorkspaceIdSet\.has\(\s*normalizedNotificationWorkspaceId,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const consumeControlCenterComposerSubmissionSuppression = \(\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(isVisibleControlCenterMainSessionNotification\) \{[\s\S]*setControlCenterHighlightedWorkspaceIds\(\(current\) => \{[\s\S]*return \[normalizedNotificationWorkspaceId, \.\.\.current\];[\s\S]*state: "dismissed",/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*highlightedWorkspaceIds=\{controlCenterHighlightedWorkspaceIds\}[\s\S]*onVisibleWorkspaceIdsChange=\{\s*handleControlCenterVisibleWorkspaceIdsChange\s*\}[\s\S]*onCardComposerSubmit=\{\s*handleMarkControlCenterWorkspaceComposerSubmission\s*\}/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*onWorkspaceCompletion=\{handleControlCenterWorkspaceCompletion\}/,
+  );
 });
 
 test("app shell clears a consumed file explorer focus request", async () => {
@@ -215,7 +323,7 @@ test("app shell restores the last internal display and otherwise keeps the curre
   );
   assert.match(
     source,
-    /\(displayView\.surface === "document" \|\| displayView\.surface === "file"\)\s*&&\s*displayView\.resourceId\?\.trim\(\)/,
+    /displayView\.surface === "document"[\s\S]*displayView\.surface === "file"[\s\S]*displayView\.resourceId\?\.trim\(\)/,
   );
   assert.match(
     source,
@@ -231,7 +339,7 @@ test("app shell restores the last internal display and otherwise keeps the curre
   );
   assert.match(
     source,
-    /const restoreLastSpaceFileDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*const nextDisplayView = lastDisplayView \?\? spaceDisplayView;\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, spaceDisplayView, syncFileExplorerFocusWithDisplayView\]\);/,
+    /const restoreLastSpaceFileDisplayView = useCallback\(\(\) => \{[\s\S]*setSpaceDisplayView\(\{ type: "browser" \}\);[\s\S]*const lastDisplayView =[\s\S]*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[[\s\S]*selectedWorkspaceId[\s\S]*const nextDisplayView = lastDisplayView \?\? spaceDisplayView;[\s\S]*setSpaceDisplayView\(nextDisplayView\);[\s\S]*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);/,
   );
   assert.match(
     source,
@@ -454,7 +562,7 @@ test("app shell renders a persistent icon rail beside a drag-resizable explorer 
     source,
     /hostWidth -\s*explorerWidth -\s*SPACE_DISPLAY_MIN_WIDTH -\s*UTILITY_PANE_RESIZER_WIDTH/,
   );
-  assert.match(source, /new ResizeObserver\(\(\) => \{\s*syncDisplayWidth\(\);\s*\}\)/);
+  assert.match(source, /new ResizeObserver\(schedule\)/);
 });
 
 test("app shell wires filesPaneWidth into the explorer panel and uses a drag handle mirrored from the agent pane resizer", async () => {
@@ -462,7 +570,7 @@ test("app shell wires filesPaneWidth into the explorer panel and uses a drag han
 
   assert.match(
     source,
-    /const \[filesPaneWidth, setFilesPaneWidth\] = useState\(\s*DEFAULT_FILES_PANE_WIDTH,\s*\);/,
+    /const \[filesPaneWidth, setFilesPaneWidth\] =\s*useState\(\s*DEFAULT_FILES_PANE_WIDTH,\s*\);/,
   );
   assert.match(
     source,
@@ -470,7 +578,7 @@ test("app shell wires filesPaneWidth into the explorer panel and uses a drag han
   );
   assert.match(
     source,
-    /id="space-explorer-panel"[\s\S]*?style=\{\{ width: `\$\{filesPaneWidth\}px` \}\}/,
+    /style=\{\{ width: `\$\{filesPaneWidth\}px` \}\}[\s\S]*id="space-explorer-panel"/,
   );
   assert.match(
     source,
@@ -492,8 +600,18 @@ test("app shell wires filesPaneWidth into the explorer panel and uses a drag han
 test("app shell uses the top toolbar for shell navigation and removes the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /type ShellView = "space";/);
-  assert.match(source, /const \[activeShellView, setActiveShellView\] = useState<ShellView>\("space"\);/);
+  assert.match(source, /type ShellView = "control_center" \| "space";/);
+  assert.match(
+    source,
+    /const \[activeShellView, setActiveShellView\] =\s*useState<ShellView>\("control_center"\);/,
+  );
+  assert.match(source, /const handleOpenControlCenter = useCallback\(\(\) => \{/);
+  assert.match(source, /const handleEnterWorkspace = useCallback\(\s*\(workspaceId: string\) => \{/);
+  assert.match(source, /const handleOpenControlCenterWorkspaceOutput = useCallback\(\s*async \(workspaceId: string, output: WorkspaceOutputRecordPayload\) => \{/);
+  assert.match(source, /window\.electronAPI\.workspace\.getWorkspaceLifecycle\(\s*normalizedWorkspaceId/);
+  assert.match(source, /<WorkspaceControlCenter[\s\S]*onEnterWorkspace=\{handleEnterWorkspace\}[\s\S]*onOpenOutput=\{handleOpenControlCenterWorkspaceOutput\}/);
+  assert.match(source, /controlCenterActive=\{controlCenterMode\}/);
+  assert.match(source, /onOpenControlCenter=\{handleOpenControlCenter\}/);
   assert.match(source, /handleOpenAutomationsPane = useCallback/);
   assert.match(source, /const handleOpenSessionsPane = useCallback\(\(\) => \{/);
   assert.match(source, /setAgentView\(\{ type: "sessions" \}\)/);
@@ -508,6 +626,9 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
   assert.doesNotMatch(source, /<SettingsDialog[\s\S]*onOpenAutomationRunSession/);
   assert.doesNotMatch(source, /handleOpenMarketplace/);
   assert.doesNotMatch(source, /MarketplacePane/);
+  assert.doesNotMatch(source, /ChatArtifactBrowserRequest/);
+  assert.doesNotMatch(source, /handleOpenControlCenterWorkspaceArtifacts/);
+  assert.doesNotMatch(source, /artifactBrowserRequest=\{chatArtifactBrowserRequest\}/);
   assert.doesNotMatch(source, /activeShellView === "marketplace"/);
   assert.doesNotMatch(source, /handleOpenSpace = useCallback/);
   assert.doesNotMatch(source, /onOpenSpace=\{handleOpenSpace\}/);
@@ -594,7 +715,7 @@ test("app shell keeps agent browser open requests session-scoped until the user 
 
   assert.match(
     source,
-    /const \[chatBrowserJumpRequestKeysBySessionId,\s*setChatBrowserJumpRequestKeysBySessionId\] =\s*useState<Record<string, number>>\(\{\}\);/,
+    /const \[\s*chatBrowserJumpRequestKeysBySessionId,\s*setChatBrowserJumpRequestKeysBySessionId,\s*\] =\s*useState<Record<string, number>>\(\{\}\);/,
   );
   assert.match(
     source,
@@ -641,6 +762,13 @@ test("app shell tracks unread task proposals and badges the inbox control", asyn
 test("app shell renders a persistent explorer rail and universal display in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
+  assert.match(
+    source,
+    /const CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY =\s*"holaboss-control-center-cards-per-row-v1";/,
+  );
+  assert.match(source, /function loadControlCenterCardsPerRow\(\): ControlCenterCardsPerRow \{/);
+  assert.match(source, /localStorage\.getItem\(CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY\)/);
+  assert.match(source, /if \(isControlCenterCardsPerRow\(parsed\)\) \{\s*return parsed;\s*\}/);
   assert.match(source, /function loadSpaceVisibility\(\): SpaceVisibilityState \{/);
   assert.match(
     source,
@@ -662,12 +790,20 @@ test("app shell renders a persistent explorer rail and universal display in spac
     source,
     /const \[spaceWorkspacePanelCollapsed, setSpaceWorkspacePanelCollapsed\] =\s*useState\(loadSpaceWorkspacePanelCollapsed\);/,
   );
+  assert.match(
+    source,
+    /const \[controlCenterCardsPerRow, setControlCenterCardsPerRow\] =\s*useState<ControlCenterCardsPerRow>\(loadControlCenterCardsPerRow\);/,
+  );
   assert.doesNotMatch(source, /spaceExplorerCollapsed/);
   assert.doesNotMatch(source, /setSpaceExplorerCollapsed/);
   assert.match(source, /const \[spaceDisplayView, setSpaceDisplayView\] = useState<SpaceDisplayView>\(\{\s*type: "browser",\s*\}\);/);
   assert.match(
     source,
     /localStorage\.setItem\(\s*SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,\s*spaceWorkspacePanelCollapsed \? "1" : "0",\s*\);/,
+  );
+  assert.match(
+    source,
+    /localStorage\.setItem\(\s*CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY,\s*String\(controlCenterCardsPerRow\),\s*\);/,
   );
   assert.match(
     source,
@@ -680,6 +816,10 @@ test("app shell renders a persistent explorer rail and universal display in spac
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*installedApps=\{installedApps\}/);
   assert.match(source, /<SpaceApplicationsExplorerPane[\s\S]*onAddApp=\{handleAddApp\}/);
   assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*cardsPerRow=\{controlCenterCardsPerRow\}/,
+  );
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*layoutSyncKey=\{spaceDisplayLayoutSyncKey\}/);
   assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*embedded/);
   assert.match(
@@ -869,11 +1009,11 @@ test("app shell clears missing internal file surfaces after explorer deletion or
   assert.match(source, /function isPathWithin\(parentPath: string, targetPath: string\)/);
   assert.match(
     source,
-    /const handleMissingInternalResource = useCallback\(\s*\(resourceId: string\) => \{[\s\S]*setAgentView\(\(current\) => \{[\s\S]*return \{ type: "chat" \};[\s\S]*\}\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*delete lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[[\s\S]*selectedWorkspaceId[\s\S]*\];[\s\S]*return \{ type: "empty" \};[\s\S]*\}\);/,
+    /const handleMissingInternalResource = useCallback\(\s*\(resourceId: string\) => \{[\s\S]*setAgentView\(\(current\) => \{[\s\S]*return \{ type: "chat" \};[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*delete lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[[\s\S]*selectedWorkspaceId[\s\S]*return \{ type: "empty" \};/,
   );
   assert.match(
     source,
-    /const handleDeleteWorkspaceEntry = useCallback\(\s*\(entry: LocalFileEntry\) => \{[\s\S]*const normalizedDeletedPath = normalizeComparablePath\(entry\.absolutePath\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*if \(!isPathWithin\(normalizedDeletedPath, current\.resourceId\?\.trim\(\) \?\? ""\)\) \{\s*return current;\s*\}[\s\S]*return \{ type: "empty" \};[\s\S]*\}\);/,
+    /const handleDeleteWorkspaceEntry = useCallback\(\s*\(entry: LocalFileEntry\) => \{[\s\S]*const normalizedDeletedPath = normalizeComparablePath\(entry\.absolutePath\);[\s\S]*setSpaceDisplayView\(\(current\) => \{[\s\S]*!isPathWithin\(normalizedDeletedPath, current\.resourceId\?\.trim\(\) \?\? ""\)[\s\S]*return \{ type: "empty" \};/,
   );
   assert.match(source, /<InternalSurfacePane[\s\S]*onResourceMissing=\{handleMissingInternalResource\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*onDeleteEntry=\{handleDeleteWorkspaceEntry\}/);
@@ -885,7 +1025,7 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /type ChatSessionOpenRequest = \{\s*sessionId: string;\s*requestKey: number;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*\};/);
   assert.match(
     source,
-    /const \[chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace\] =\s*useState<Record<string, string>>\(\{\}\);/,
+    /const \[\s*chatComposerDraftTextByWorkspace,\s*setChatComposerDraftTextByWorkspace,\s*\] =\s*useState<Record<string, string>>\(\{\}\);/,
   );
   assert.match(
     source,
@@ -913,7 +1053,7 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /<OperationsInboxPane[\s\S]*proposals=\{taskProposals\}/);
   assert.match(
     source,
-    /onRequestCreateSession=\{\(request\) => void handleCreateSession\(request\)\}[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
+    /sessionOpenRequest=\{chatSessionOpenRequest\}[\s\S]*composerDraftText=\{[\s\S]*chatComposerDraftTextByWorkspace\[selectedWorkspaceId\] \?\? ""[\s\S]*\}[\s\S]*onComposerDraftTextChange=\{handleChatComposerDraftTextChange\}/,
   );
   assert.match(source, /onSessionOpenRequestConsumed=\{handleChatSessionOpenRequestConsumed\}/);
 });
@@ -932,7 +1072,7 @@ test("app shell passes workspace-scoped chat composer drafts into the chat pane"
 
   assert.match(
     source,
-    /const \[chatComposerDraftTextByWorkspace, setChatComposerDraftTextByWorkspace\] =\s*useState<Record<string, string>>\(\{\}\);/,
+    /const \[\s*chatComposerDraftTextByWorkspace,\s*setChatComposerDraftTextByWorkspace,\s*\] =\s*useState<Record<string, string>>\(\{\}\);/,
   );
   assert.match(
     source,
