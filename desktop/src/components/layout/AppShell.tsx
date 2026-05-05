@@ -1575,6 +1575,7 @@ function AppShellContent() {
   const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
     {},
   );
+  const singleWorkspaceStartupEntryHandledRef = useRef(false);
   const lastRestorableSpaceFileDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceFileDisplayView>
   >({});
@@ -3636,6 +3637,27 @@ function AppShellContent() {
       setSelectedWorkspaceId,
     ],
   );
+
+  useEffect(() => {
+    if (singleWorkspaceStartupEntryHandledRef.current) {
+      return;
+    }
+    if (!hasHydratedWorkspaceList) {
+      return;
+    }
+
+    singleWorkspaceStartupEntryHandledRef.current = true;
+    if (activeShellView !== "control_center" || workspaces.length !== 1) {
+      return;
+    }
+
+    handleEnterWorkspace(workspaces[0]?.id ?? "");
+  }, [
+    activeShellView,
+    handleEnterWorkspace,
+    hasHydratedWorkspaceList,
+    workspaces,
+  ]);
 
   const handleChatComposerDraftTextChange = useCallback(
     (text: string) => {

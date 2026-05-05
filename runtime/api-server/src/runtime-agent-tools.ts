@@ -335,6 +335,19 @@ export interface RuntimeAgentToolsWriteScratchpadParams {
   content?: string | null;
 }
 
+export type WorkspaceInstructionsOperation =
+  | "read_current"
+  | "append_rule"
+  | "remove_rule"
+  | "replace_managed_section";
+
+export interface RuntimeAgentToolsUpdateWorkspaceInstructionsParams {
+  workspaceId: string;
+  op: WorkspaceInstructionsOperation;
+  rule?: string | null;
+  content?: string | null;
+}
+
 export interface RuntimeAgentToolsListTerminalSessionsParams {
   workspaceId: string;
   sessionId?: string | null;
@@ -390,6 +403,10 @@ export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce", "deliver"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const WORKSPACE_INSTRUCTIONS_FILE_PATH = "AGENTS.md";
+const WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_START = "<!-- holaboss-managed-workspace-instructions:start -->";
+const WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_END = "<!-- holaboss-managed-workspace-instructions:end -->";
+const WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_HEADING = "## Holaboss Managed Workspace Instructions";
 
 function runtimeToolBaseDefinition(id: string) {
   const definition = RUNTIME_AGENT_TOOL_BASE_DEFINITIONS.find((tool) => tool.id === id);
@@ -527,6 +544,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("holaboss_scratchpad_write").description
   },
   {
+    id: runtimeToolBaseDefinition("holaboss_update_workspace_instructions").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/workspace-instructions",
+    description: runtimeToolBaseDefinition("holaboss_update_workspace_instructions").description
+  },
+  {
     id: runtimeToolBaseDefinition("skill").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/skill",
@@ -647,6 +670,121 @@ function normalizedStringList(value: unknown): string[] {
     .filter((item) => item.length > 0);
 }
 
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n?/g, "\n");
+}
+
+function normalizeManagedSectionContent(value: string | null | undefined): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return normalizeLineEndings(value).trim();
+}
+
+function normalizeRuleText(value: string | null | undefined): string {
+  return normalizeManagedSectionContent(value).replace(/\s+/g, " ");
+}
+
+function extractManagedRulesFromContent(content: string): string[] {
+  return normalizeLineEndings(content)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^[-*]\s+/.test(line))
+    .map((line) => line.replace(/^[-*]\s+/, "").trim())
+    .filter((line) => line.length > 0);
+}
+
+type WorkspaceInstructionsDocumentState = {
+  normalizedText: string;
+  hasManagedSection: boolean;
+  managedSectionContent: string;
+  beforeManagedSection: string;
+  afterManagedSection: string;
+  malformedManagedSection: boolean;
+};
+
+function parseWorkspaceInstructionsDocument(text: string): WorkspaceInstructionsDocumentState {
+  const normalizedText = normalizeLineEndings(text);
+  const startIndex = normalizedText.indexOf(WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_START);
+  const endIndex = normalizedText.indexOf(WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_END);
+  if (startIndex === -1 && endIndex === -1) {
+    return {
+      normalizedText,
+      hasManagedSection: false,
+      managedSectionContent: "",
+      beforeManagedSection: normalizedText,
+      afterManagedSection: "",
+      malformedManagedSection: false,
+    };
+  }
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    return {
+      normalizedText,
+      hasManagedSection: false,
+      managedSectionContent: "",
+      beforeManagedSection: normalizedText,
+      afterManagedSection: "",
+      malformedManagedSection: true,
+    };
+  }
+  const endMarkerIndex = endIndex + WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_END.length;
+  const beforeManagedSection = normalizedText.slice(0, startIndex).trimEnd();
+  const afterManagedSection = normalizedText.slice(endMarkerIndex).trimStart();
+  let managedSectionBody = normalizedText
+    .slice(startIndex + WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_START.length, endIndex)
+    .trim();
+  if (managedSectionBody.startsWith(WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_HEADING)) {
+    managedSectionBody = managedSectionBody
+      .slice(WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_HEADING.length)
+      .trim();
+  }
+  return {
+    normalizedText,
+    hasManagedSection: true,
+    managedSectionContent: managedSectionBody,
+    beforeManagedSection,
+    afterManagedSection,
+    malformedManagedSection: false,
+  };
+}
+
+function renderWorkspaceInstructionsManagedSection(content: string): string {
+  const normalizedContent = normalizeManagedSectionContent(content);
+  const lines = [
+    WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_START,
+    WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_HEADING,
+  ];
+  if (normalizedContent) {
+    lines.push("", normalizedContent);
+  }
+  lines.push(WORKSPACE_INSTRUCTIONS_MANAGED_SECTION_END);
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function composeWorkspaceInstructionsDocument(params: {
+  beforeManagedSection: string;
+  managedSectionContent: string;
+  afterManagedSection: string;
+}): string {
+  const parts: string[] = [];
+  const before = params.beforeManagedSection.trim();
+  const after = params.afterManagedSection.trim();
+  const managed = normalizeManagedSectionContent(params.managedSectionContent);
+  if (before) {
+    parts.push(before);
+  }
+  if (managed) {
+    parts.push(renderWorkspaceInstructionsManagedSection(managed).trimEnd());
+  }
+  if (after) {
+    parts.push(after);
+  }
+  if (parts.length === 0) {
+    return "";
+  }
+  return `${parts.join("\n\n").trimEnd()}\n`;
+}
+
 function subagentRunHasWaitingBlocker(run: SubagentRunRecord): boolean {
   return normalizedString(run.blockingPayload?.status).toLowerCase() === "waiting_on_user";
 }
@@ -746,6 +884,23 @@ function normalizedSubagentTaskTitle(value: string | null | undefined, goal: str
     .map((line) => line.trim())
     .find((line) => line.length > 0);
   return (firstLine ?? goal).slice(0, 120);
+}
+
+const EXPLICIT_USER_BROWSER_SURFACE_PATTERN = /\buse my browser\b/i;
+
+function inputTextValue(
+  input: { payload?: Record<string, unknown> | null } | null | undefined,
+): string {
+  const value = input?.payload?.text;
+  return typeof value === "string" ? value : "";
+}
+
+function textExplicitlyRequestsUserBrowserSurface(value: string | null | undefined): boolean {
+  const text = normalizedString(value);
+  if (!text) {
+    return false;
+  }
+  return EXPLICIT_USER_BROWSER_SURFACE_PATTERN.test(text);
 }
 
 function contextUsesUserBrowserSurface(value: unknown): boolean {
@@ -1566,6 +1721,11 @@ export class RuntimeAgentToolsService {
       const title = normalizedSubagentTaskTitle(task.title, task.goal);
       const requestedModel = task.model || null;
       const parentInput = parentInputId ? this.store.getInput(parentInputId) : null;
+      const allowUserBrowserSurface = textExplicitlyRequestsUserBrowserSurface(
+        inputTextValue(parentInput),
+      );
+      const useUserBrowserSurface =
+        task.useUserBrowserSurface === true && allowUserBrowserSurface;
       const effectiveProfile = resolveSubagentExecutionProfile({
         selectedModel: params.selectedModel ?? inputModelValue(parentInput),
         selectedThinkingValue: inputThinkingValue(parentInput),
@@ -1578,7 +1738,6 @@ export class RuntimeAgentToolsService {
       const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
       const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
       const forwardedQuotedSkillIds = quotedSkillIdsFromInstruction(parentInput?.payload.text);
-      const useUserBrowserSurface = task.useUserBrowserSurface === true;
       const delegatedInstruction = serializeQuotedSkillPrompt(
         subagentInstruction({ goal: task.goal, context: task.context || null }),
         forwardedQuotedSkillIds,
@@ -2449,6 +2608,121 @@ export class RuntimeAgentToolsService {
       }
       throw error;
     }
+  }
+
+  async updateWorkspaceInstructions(
+    params: RuntimeAgentToolsUpdateWorkspaceInstructionsParams,
+  ): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const op = normalizedString(params.op) as WorkspaceInstructionsOperation;
+    if (
+      op !== "read_current" &&
+      op !== "append_rule" &&
+      op !== "remove_rule" &&
+      op !== "replace_managed_section"
+    ) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "workspace_instructions_op_invalid",
+        "op must be one of [\"read_current\",\"append_rule\",\"remove_rule\",\"replace_managed_section\"]",
+      );
+    }
+
+    const absolutePath = path.join(
+      this.options.workspaceRoot,
+      params.workspaceId,
+      WORKSPACE_INSTRUCTIONS_FILE_PATH,
+    );
+    const fileExists = existsSync(absolutePath);
+    const currentText = fileExists
+      ? normalizeLineEndings(await fs.readFile(absolutePath, "utf8"))
+      : "";
+    const parsed = parseWorkspaceInstructionsDocument(currentText);
+    if (parsed.malformedManagedSection) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "workspace_instructions_malformed",
+        "AGENTS.md contains malformed managed workspace-instructions markers",
+      );
+    }
+
+    let nextManagedSectionContent = parsed.managedSectionContent;
+    let changed = false;
+
+    if (op === "append_rule") {
+      const rule = normalizeRuleText(params.rule);
+      if (!rule) {
+        throw new RuntimeAgentToolsServiceError(
+          400,
+          "workspace_instructions_rule_required",
+          "rule is required for append_rule",
+        );
+      }
+      const existingRules = new Set(
+        extractManagedRulesFromContent(parsed.managedSectionContent).map((entry) =>
+          normalizeRuleText(entry),
+        ),
+      );
+      if (!existingRules.has(rule)) {
+        nextManagedSectionContent = parsed.managedSectionContent
+          ? `${parsed.managedSectionContent.trimEnd()}\n- ${rule}`
+          : `- ${rule}`;
+        changed = true;
+      }
+    } else if (op === "remove_rule") {
+      const rule = normalizeRuleText(params.rule);
+      if (!rule) {
+        throw new RuntimeAgentToolsServiceError(
+          400,
+          "workspace_instructions_rule_required",
+          "rule is required for remove_rule",
+        );
+      }
+      const remainingLines = normalizeLineEndings(parsed.managedSectionContent)
+        .split("\n")
+        .filter((line) => {
+          const trimmed = line.trim();
+          if (!/^[-*]\s+/.test(trimmed)) {
+            return true;
+          }
+          return normalizeRuleText(trimmed.replace(/^[-*]\s+/, "")) !== rule;
+        });
+      const nextContent = normalizeManagedSectionContent(
+        remainingLines.join("\n"),
+      );
+      changed = nextContent !== parsed.managedSectionContent;
+      nextManagedSectionContent = nextContent;
+    } else if (op === "replace_managed_section") {
+      const nextContent = normalizeManagedSectionContent(params.content);
+      changed = nextContent !== parsed.managedSectionContent || parsed.hasManagedSection !== Boolean(nextContent);
+      nextManagedSectionContent = nextContent;
+    }
+
+    const nextText = composeWorkspaceInstructionsDocument({
+      beforeManagedSection: parsed.beforeManagedSection,
+      managedSectionContent: nextManagedSectionContent,
+      afterManagedSection: parsed.afterManagedSection,
+    });
+
+    if (changed && nextText !== currentText) {
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, nextText, "utf8");
+    }
+
+    const finalText = changed ? nextText : currentText;
+    const finalParsed = parseWorkspaceInstructionsDocument(finalText);
+    return {
+      op,
+      changed: changed && nextText !== currentText,
+      file_exists: fileExists || Boolean(finalText),
+      file_path: WORKSPACE_INSTRUCTIONS_FILE_PATH,
+      managed_section_present: finalParsed.hasManagedSection,
+      managed_section_content: finalParsed.hasManagedSection
+        ? finalParsed.managedSectionContent
+        : null,
+      managed_rules: extractManagedRulesFromContent(finalParsed.managedSectionContent),
+      full_text: finalText || null,
+    };
   }
 
   listTerminalSessions(params: RuntimeAgentToolsListTerminalSessionsParams): JsonObject {

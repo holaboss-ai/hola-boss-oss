@@ -19,6 +19,7 @@ const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
 const RUNTIME_TOOLS_WEB_SEARCH_PATH = "/api/v1/capabilities/runtime-tools/web-search";
 const RUNTIME_TOOLS_TODO_PATH = "/api/v1/capabilities/runtime-tools/todo";
 const RUNTIME_TOOLS_SCRATCHPAD_PATH = "/api/v1/capabilities/runtime-tools/scratchpad";
+const RUNTIME_TOOLS_WORKSPACE_INSTRUCTIONS_PATH = "/api/v1/capabilities/runtime-tools/workspace-instructions";
 const RUNTIME_TOOLS_SKILL_PATH = "/api/v1/capabilities/runtime-tools/skill";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const RUNTIME_TOOLS_DATA_TABLES_PATH = "/api/v1/capabilities/runtime-tools/data-tables";
@@ -211,6 +212,21 @@ function createDelegateTaskBody(toolParams: unknown): Record<string, unknown> {
     return { tasks: normalizedTasks };
   }
   return { tasks: [normalizeDelegateTask(params)] };
+}
+
+function createWorkspaceInstructionsBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  const body: Record<string, unknown> = {
+    op: String(params.op ?? ""),
+  };
+  const rule = optionalString(params.rule);
+  if (rule) {
+    body.rule = rule;
+  }
+  if (typeof params.content === "string") {
+    body.content = params.content;
+  }
+  return body;
 }
 
 function getSubagentPath(toolParams: unknown): string {
@@ -523,6 +539,12 @@ function requestPlan(
       return { method: "GET", requestPath: RUNTIME_TOOLS_SCRATCHPAD_PATH };
     case "holaboss_scratchpad_write":
       return { method: "POST", requestPath: RUNTIME_TOOLS_SCRATCHPAD_PATH, body: createScratchpadWriteBody(toolParams) };
+    case "holaboss_update_workspace_instructions":
+      return {
+        method: "POST",
+        requestPath: RUNTIME_TOOLS_WORKSPACE_INSTRUCTIONS_PATH,
+        body: createWorkspaceInstructionsBody(toolParams),
+      };
     case "terminal_sessions_list":
       return { method: "GET", requestPath: RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH };
     case "terminal_session_start":
