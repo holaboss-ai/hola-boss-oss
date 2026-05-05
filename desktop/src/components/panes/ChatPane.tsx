@@ -6,9 +6,10 @@ import {
   Fragment,
   FormEvent,
   KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
+  memo,
   type ReactNode,
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -114,6 +115,12 @@ export type ChatAssistantSegment =
       text: string;
       tone?: "default" | "error";
     };
+
+const EMPTY_ATTACHMENTS: ChatAttachment[] = [];
+const EMPTY_SEGMENTS: ChatAssistantSegment[] = [];
+const EMPTY_EXECUTION_ITEMS: ChatExecutionTimelineItem[] = [];
+const EMPTY_OUTPUTS: WorkspaceOutputRecordPayload[] = [];
+const EMPTY_MEMORY_PROPOSALS: MemoryUpdateProposalRecordPayload[] = [];
 
 export interface ChatMessage {
   id: string;
@@ -223,11 +230,6 @@ type ChatExecutionTimelineItem =
       step: ChatTraceStep;
       order: number;
     };
-
-interface ChatScrollbarDragState {
-  pointerId: number;
-  thumbPointerOffset: number;
-}
 
 interface PendingLocalAttachmentFile {
   id: string;
@@ -362,7 +364,6 @@ const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
 const CHAT_HISTORY_PAGE_SIZE = 10;
 const CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
-const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const COMPOSER_FOOTER_GAP_PX = 8;
 const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;
 const COMPOSER_FULL_THINKING_CONTROL_WIDTH_PX = 88;
@@ -3359,11 +3360,6 @@ export function ChatPane({
     historyViewportRestoreGeneration,
     setHistoryViewportRestoreGeneration,
   ] = useState(0);
-  const [chatScrollMetrics, setChatScrollMetrics] = useState({
-    scrollTop: 0,
-    scrollHeight: 0,
-    clientHeight: 0,
-  });
   const [streamTelemetry, setStreamTelemetry] = useState<
     StreamTelemetryEntry[]
   >([]);
@@ -3406,21 +3402,16 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     useState<BrowserTabListPayload>(() => initialBrowserState("user"));
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
-  const chatScrollbarThumbRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerBlockRef = useRef<HTMLDivElement>(null);
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
+  const [isAwayFromChatBottom, setIsAwayFromChatBottom] = useState(false);
   const pendingOptimisticUserMessagesRef = useRef<
     PendingOptimisticUserMessage[]
   >([]);
   const lastChatScrollTopRef = useRef(0);
-  const chatScrollMetricsSyncFrameRef = useRef<number | null>(null);
-  const chatScrollMetricsSyncTargetRef = useRef<HTMLDivElement | null>(null);
-  const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(null);
-  const chatScrollbarBodyUserSelectRef = useRef<string | null>(null);
-  const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const activeSessionReadOnlyRef = useRef(false);
@@ -3470,6 +3461,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const skipNextComposerDraftPublishRef = useRef(false);
   const liveAssistantSegmentsRef = useRef<ChatAssistantSegment[]>([]);
   const liveAssistantTextRef = useRef("");
+  const liveAssistantFlushFrameRef = useRef<number | null>(null);
   const liveExecutionItemsRef = useRef<ChatExecutionTimelineItem[]>([]);
   const historyViewportGenerationRef = useRef(0);
   const [activeSessionId, setActiveSessionId] = useState("");
@@ -3721,6 +3713,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   }
 
   function resetLiveTurn() {
+    cancelLiveAssistantFlush();
     liveAssistantSegmentsRef.current = [];
     liveAssistantTextRef.current = "";
     liveExecutionItemsRef.current = [];
@@ -4275,6 +4268,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     if (!liveAssistantTextRef.current) {
       return;
     }
+    cancelLiveAssistantFlush();
     flushSync(() => {
       setLiveAssistantSegmentsState(
         appendAssistantOutputSegment(
@@ -4304,15 +4298,25 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     });
   }
 
+  function cancelLiveAssistantFlush() {
+    if (liveAssistantFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(liveAssistantFlushFrameRef.current);
+      liveAssistantFlushFrameRef.current = null;
+    }
+  }
+
+  function scheduleLiveAssistantFlush() {
+    if (liveAssistantFlushFrameRef.current !== null) return;
+    liveAssistantFlushFrameRef.current = window.requestAnimationFrame(() => {
+      liveAssistantFlushFrameRef.current = null;
+      setLiveAssistantText(liveAssistantTextRef.current);
+    });
+  }
+
   function appendLiveAssistantDelta(delta: string) {
     flushLiveExecutionSegment();
-    flushSync(() => {
-      setLiveAssistantText((prev) => {
-        const next = `${prev}${delta}`;
-        liveAssistantTextRef.current = next;
-        return next;
-      });
-    });
+    liveAssistantTextRef.current = `${liveAssistantTextRef.current}${delta}`;
+    scheduleLiveAssistantFlush();
   }
 
   function appendLiveThinkingDelta(delta: string, order: number) {
@@ -4502,12 +4506,15 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     return true;
   }
 
-  function updateMemoryProposalDraft(proposalId: string, value: string) {
-    setMemoryProposalDrafts((prev) => ({
-      ...prev,
-      [proposalId]: value,
-    }));
-  }
+  const updateMemoryProposalDraft = useCallback(
+    (proposalId: string, value: string) => {
+      setMemoryProposalDrafts((prev) => ({
+        ...prev,
+        [proposalId]: value,
+      }));
+    },
+    [],
+  );
 
   async function handleAcceptMemoryProposal(
     proposal: MemoryUpdateProposalRecordPayload,
@@ -4571,188 +4578,16 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     }
   }
 
-  function toggleTraceStep(stepId: string) {
+  const toggleTraceStep = useCallback((stepId: string) => {
     setCollapsedTraceByStepId((prev) => ({
       ...prev,
       [stepId]: !(prev[stepId] ?? true),
     }));
-  }
+  }, []);
 
   function setLiveExecutionItemsState(nextItems: ChatExecutionTimelineItem[]) {
     liveExecutionItemsRef.current = nextItems;
     setLiveExecutionItems(nextItems);
-  }
-
-  function syncChatScrollMetrics(container?: HTMLDivElement | null) {
-    const target = container ?? messagesRef.current;
-    if (!target) {
-      return;
-    }
-
-    lastChatScrollTopRef.current = target.scrollTop;
-
-    setChatScrollMetrics((previous) => {
-      const next = {
-        scrollTop: target.scrollTop,
-        scrollHeight: target.scrollHeight,
-        clientHeight: target.clientHeight,
-      };
-
-      if (
-        previous.scrollTop === next.scrollTop &&
-        previous.scrollHeight === next.scrollHeight &&
-        previous.clientHeight === next.clientHeight
-      ) {
-        return previous;
-      }
-
-      return next;
-    });
-  }
-
-  const cancelChatScrollMetricsSync = () => {
-    if (chatScrollMetricsSyncFrameRef.current !== null) {
-      window.cancelAnimationFrame(chatScrollMetricsSyncFrameRef.current);
-      chatScrollMetricsSyncFrameRef.current = null;
-    }
-    chatScrollMetricsSyncTargetRef.current = null;
-  };
-
-  const scheduleChatScrollMetricsSync = (container?: HTMLDivElement | null) => {
-    if (container) {
-      chatScrollMetricsSyncTargetRef.current = container;
-    } else if (chatScrollMetricsSyncTargetRef.current === null) {
-      chatScrollMetricsSyncTargetRef.current = messagesRef.current;
-    }
-
-    if (chatScrollMetricsSyncTargetRef.current === null) {
-      return;
-    }
-    if (chatScrollMetricsSyncFrameRef.current !== null) {
-      return;
-    }
-
-    chatScrollMetricsSyncFrameRef.current = window.requestAnimationFrame(() => {
-      chatScrollMetricsSyncFrameRef.current = null;
-      const target =
-        chatScrollMetricsSyncTargetRef.current ?? messagesRef.current;
-      chatScrollMetricsSyncTargetRef.current = null;
-      syncChatScrollMetrics(target);
-    });
-  };
-
-  function clearChatScrollbarDragState() {
-    chatScrollbarDragStateRef.current = null;
-    if (typeof document === "undefined") {
-      return;
-    }
-    if (chatScrollbarBodyUserSelectRef.current !== null) {
-      document.body.style.userSelect = chatScrollbarBodyUserSelectRef.current;
-      chatScrollbarBodyUserSelectRef.current = null;
-    }
-    if (chatScrollbarBodyCursorRef.current !== null) {
-      document.body.style.cursor = chatScrollbarBodyCursorRef.current;
-      chatScrollbarBodyCursorRef.current = null;
-    }
-  }
-
-  function updateChatScrollFromScrollbarPointer(
-    railElement: HTMLDivElement,
-    clientY: number,
-    thumbPointerOffset: number,
-  ) {
-    const container = messagesRef.current;
-    if (!container || !showCustomChatScrollbar || chatScrollRange <= 0) {
-      return;
-    }
-
-    const railRect = railElement.getBoundingClientRect();
-    const unclampedThumbOffset = clientY - railRect.top - thumbPointerOffset;
-    const nextThumbOffset = Math.min(
-      Math.max(0, unclampedThumbOffset),
-      chatScrollbarThumbTravel,
-    );
-    const nextScrollTop =
-      chatScrollbarThumbTravel > 0
-        ? (nextThumbOffset / chatScrollbarThumbTravel) * chatScrollRange
-        : 0;
-
-    shouldAutoScrollRef.current = false;
-    container.scrollTop = nextScrollTop;
-    lastChatScrollTopRef.current = nextScrollTop;
-    scheduleChatScrollMetricsSync(container);
-  }
-
-  function handleChatScrollbarPointerDown(
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) {
-    if (event.button !== 0 || !showCustomChatScrollbar) {
-      return;
-    }
-
-    let thumbPointerOffset = chatScrollbarThumbHeight / 2;
-    if (
-      event.target instanceof Node &&
-      chatScrollbarThumbRef.current?.contains(event.target)
-    ) {
-      const thumbRect = chatScrollbarThumbRef.current.getBoundingClientRect();
-      thumbPointerOffset = Math.min(
-        Math.max(0, event.clientY - thumbRect.top),
-        chatScrollbarThumbHeight,
-      );
-    }
-
-    chatScrollbarDragStateRef.current = {
-      pointerId: event.pointerId,
-      thumbPointerOffset,
-    };
-
-    if (typeof document !== "undefined") {
-      if (chatScrollbarBodyUserSelectRef.current === null) {
-        chatScrollbarBodyUserSelectRef.current = document.body.style.userSelect;
-      }
-      if (chatScrollbarBodyCursorRef.current === null) {
-        chatScrollbarBodyCursorRef.current = document.body.style.cursor;
-      }
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "grabbing";
-    }
-
-    event.currentTarget.setPointerCapture(event.pointerId);
-    updateChatScrollFromScrollbarPointer(
-      event.currentTarget,
-      event.clientY,
-      thumbPointerOffset,
-    );
-    event.preventDefault();
-  }
-
-  function handleChatScrollbarPointerMove(
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) {
-    const dragState = chatScrollbarDragStateRef.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) {
-      return;
-    }
-    updateChatScrollFromScrollbarPointer(
-      event.currentTarget,
-      event.clientY,
-      dragState.thumbPointerOffset,
-    );
-    event.preventDefault();
-  }
-
-  function handleChatScrollbarPointerUp(
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) {
-    const dragState = chatScrollbarDragStateRef.current;
-    if (!dragState || dragState.pointerId !== event.pointerId) {
-      return;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    clearChatScrollbarDragState();
   }
 
   function upsertLiveTraceStep(step: ChatTraceStep) {
@@ -4823,7 +4658,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       container.scrollHeight - pendingRestore.scrollHeight;
     container.scrollTop = pendingRestore.scrollTop + scrollHeightDelta;
     lastChatScrollTopRef.current = container.scrollTop;
-    scheduleChatScrollMetricsSync(container);
   }, [messages]);
 
   useLayoutEffect(() => {
@@ -4842,7 +4676,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       behavior: "auto",
     });
     lastChatScrollTopRef.current = container.scrollTop;
-    scheduleChatScrollMetricsSync(container);
 
     const frameId = window.requestAnimationFrame(() => {
       if (historyViewportGenerationRef.current !== restoreGeneration) {
@@ -4873,14 +4706,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setSessionRecordOverrides({});
     setActiveSessionReadOnly(false);
   }, [selectedWorkspaceId]);
-
-  useEffect(
-    () => () => {
-      clearChatScrollbarDragState();
-      cancelChatScrollMetricsSync();
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!isResponding) {
@@ -5992,6 +5817,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
 
   useEffect(() => {
     return () => {
+      cancelLiveAssistantFlush();
       const activeStreamId = activeStreamIdRef.current;
       if (activeStreamId) {
         void closeStreamWithReason(activeStreamId, "chatpane_unmount");
@@ -7211,6 +7037,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     return null;
   }, [displayMessages, showLiveAssistantTurn]);
   const hasMessages = displayMessages.length > 0 || showLiveAssistantTurn;
+  const hasLoaderHeader =
+    isLoadingOlderHistory ||
+    loadedHistoryMessageCount < totalHistoryMessageCount;
   const readinessMessage =
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
@@ -7669,85 +7498,6 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
   const showHistoryRestoreScreen = isLoadingHistory || isHistoryViewportPending;
-  const chatScrollRange = Math.max(
-    0,
-    chatScrollMetrics.scrollHeight - chatScrollMetrics.clientHeight,
-  );
-  const showCustomChatScrollbar =
-    !showHistoryRestoreScreen &&
-    hasMessages &&
-    chatScrollMetrics.clientHeight > 0 &&
-    chatScrollRange > 1;
-  // The rail now lives inside the messages-scroll wrapper, so it doesn't
-  // need to compensate for the composer height — its bounding box is
-  // already exactly the scroll viewport.
-  const chatScrollbarRailInset = 0;
-  const chatScrollbarRailHeight = chatScrollMetrics.clientHeight;
-  const chatScrollbarThumbHeight = showCustomChatScrollbar
-    ? Math.max(
-        CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX,
-        Math.min(
-          chatScrollbarRailHeight,
-          (chatScrollMetrics.clientHeight / chatScrollMetrics.scrollHeight) *
-            chatScrollbarRailHeight,
-        ),
-      )
-    : 0;
-  const chatScrollbarThumbTravel = Math.max(
-    0,
-    chatScrollbarRailHeight - chatScrollbarThumbHeight,
-  );
-  const chatScrollbarThumbOffset = showCustomChatScrollbar
-    ? chatScrollRange > 0
-      ? (chatScrollMetrics.scrollTop / chatScrollRange) *
-        chatScrollbarThumbTravel
-      : 0
-    : 0;
-
-  useEffect(() => {
-    if (showCustomChatScrollbar) {
-      return;
-    }
-    clearChatScrollbarDragState();
-  }, [showCustomChatScrollbar]);
-
-  useEffect(() => {
-    if (!hasMessages) {
-      cancelChatScrollMetricsSync();
-      setChatScrollMetrics({
-        scrollTop: 0,
-        scrollHeight: 0,
-        clientHeight: 0,
-      });
-      return;
-    }
-
-    scheduleChatScrollMetricsSync();
-
-    const container = messagesRef.current;
-    if (!container) {
-      return;
-    }
-
-    const resizeObserver = new ResizeObserver(() => {
-      scheduleChatScrollMetricsSync(container);
-    });
-    resizeObserver.observe(container);
-
-    if (messagesContentRef.current) {
-      resizeObserver.observe(messagesContentRef.current);
-    }
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [
-    composerBlockHeight,
-    hasMessages,
-    liveAssistantText,
-    liveExecutionItems,
-    messages,
-  ]);
 
   useEffect(() => {
     if (!hasMessages) {
@@ -7964,14 +7714,16 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                 lastChatScrollTopRef.current = nextScrollTop;
                 const nearBottom = isNearChatBottom(currentTarget);
                 shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
-                scheduleChatScrollMetricsSync(currentTarget);
+                setIsAwayFromChatBottom((current) =>
+                  current === !nearBottom ? current : !nearBottom,
+                );
                 if (
                   currentTarget.scrollTop <= CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX
                 ) {
                   void loadOlderSessionHistory();
                 }
               }}
-              className={`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
+              className={`chat-scrollbar-thin h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
               {hasMessages ? (
                 <div
@@ -7980,8 +7732,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
                 >
-                  {isLoadingOlderHistory ||
-                  loadedHistoryMessageCount < totalHistoryMessageCount ? (
+                  {hasLoaderHeader ? (
                     <div className="flex justify-center">
                       <div className="rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground">
                         {isLoadingOlderHistory
@@ -8057,22 +7808,26 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
                 >
-                  <div className="mx-auto mb-6 max-w-[560px] text-center">
-                    <div className="text-xl font-medium text-foreground">
+                  <div className="mx-auto mb-8 flex max-w-[520px] flex-col items-center text-center">
+                    <h2 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
                       {isLoadingBootstrap || isLoadingHistory
                         ? "Loading workspace context"
                         : isOnboardingVariant
                           ? "Complete workspace onboarding"
-                          : "Ask the workspace agent"}
-                    </div>
-                    <div className="mt-3 text-sm leading-7 text-muted-foreground">
-                      {selectedWorkspace
-                        ? readinessMessage ||
-                          (isOnboardingVariant
-                            ? "Follow the setup conversation here. The agent will use the workspace guide to ask only onboarding questions and capture durable setup facts."
-                            : "Messages are queued into the local runtime workspace flow, then streamed back from the live session output feed.")
-                        : "Pick a template, create a workspace, and then send the first instruction."}
-                    </div>
+                          : "What can I help with?"}
+                    </h2>
+                    {(() => {
+                      const hint = !selectedWorkspace
+                        ? "Pick a template, create a workspace, then send the first instruction."
+                        : isOnboardingVariant
+                          ? "I'll ask a few setup questions and remember your answers."
+                          : readinessMessage;
+                      return hint ? (
+                        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                          {hint}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                   <form onSubmit={onSubmit} className="w-full">
                     <div className="space-y-3">
@@ -8150,48 +7905,23 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
               )}
             </div>
 
-            {showCustomChatScrollbar ? (
-              <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4 opacity-0 transition-opacity duration-200 group-hover/chat-scroll:opacity-100">
-                <div
-                  className="pointer-events-auto absolute inset-x-0 touch-none"
-                  style={{
-                    top: `${chatScrollbarRailInset}px`,
-                    height: `${chatScrollbarRailHeight}px`,
-                  }}
-                  onPointerDown={handleChatScrollbarPointerDown}
-                  onPointerMove={handleChatScrollbarPointerMove}
-                  onPointerUp={handleChatScrollbarPointerUp}
-                  onPointerCancel={handleChatScrollbarPointerUp}
-                  onLostPointerCapture={() => {
-                    clearChatScrollbarDragState();
-                  }}
-                >
-                  <div
-                    className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
-                    style={{
-                      background:
-                        "color-mix(in oklch, var(--foreground) 5%, transparent)",
-                    }}
-                  />
-                  <div
-                    ref={chatScrollbarThumbRef}
-                    data-chat-scrollbar-thumb="true"
-                    className="absolute left-1/2 w-4 -translate-x-1/2 rounded-full cursor-grab active:cursor-grabbing"
-                    style={{
-                      top: `${chatScrollbarThumbOffset}px`,
-                      height: `${chatScrollbarThumbHeight}px`,
-                    }}
-                  >
-                    <div
-                      className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
-                      style={{
-                        background:
-                          "color-mix(in oklch, var(--muted-foreground) 25%, transparent)",
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
+            {hasMessages && isAwayFromChatBottom ? (
+              <button
+                aria-label="Jump to latest message"
+                className="absolute bottom-3 left-1/2 z-30 grid size-8 -translate-x-1/2 place-items-center rounded-full border border-border bg-background text-foreground shadow-subtle-sm transition-colors hover:bg-muted animate-in fade-in-0 slide-in-from-bottom-1 duration-150"
+                onClick={() => {
+                  const container = messagesRef.current;
+                  if (!container) return;
+                  shouldAutoScrollRef.current = true;
+                  container.scrollTo({
+                    top: container.scrollHeight,
+                    behavior: "smooth",
+                  });
+                }}
+                type="button"
+              >
+                <ChevronDown className="size-4" />
+              </button>
             ) : null}
           </div>
 
@@ -8464,7 +8194,13 @@ interface ComposerProps {
   onPreviewAttachment: (attachment: AttachmentListItem) => void;
 }
 
-export function UserTurn({
+export const UserTurn = memo(UserTurnComponent, (prev, next) =>
+  prev.text === next.text &&
+  prev.createdAt === next.createdAt &&
+  prev.attachments === next.attachments,
+);
+
+function UserTurnComponent({
   text,
   createdAt,
   attachments,
@@ -8922,7 +8658,28 @@ function AssistantTurnActionsMenu({
   );
 }
 
-export function AssistantTurn({
+export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
+  prev.label === next.label &&
+  prev.mode === next.mode &&
+  prev.showSeparator === next.showSeparator &&
+  prev.showExecutionInternals === next.showExecutionInternals &&
+  prev.text === next.text &&
+  prev.tone === next.tone &&
+  prev.segments === next.segments &&
+  prev.executionItems === next.executionItems &&
+  prev.memoryProposals === next.memoryProposals &&
+  prev.outputs === next.outputs &&
+  prev.memoryProposalAction === next.memoryProposalAction &&
+  prev.editingMemoryProposalId === next.editingMemoryProposalId &&
+  prev.memoryProposalDrafts === next.memoryProposalDrafts &&
+  prev.collapsedTraceByStepId === next.collapsedTraceByStepId &&
+  prev.live === next.live &&
+  prev.status === next.status &&
+  prev.statusAccessory === next.statusAccessory &&
+  prev.footerAccessory === next.footerAccessory,
+);
+
+function AssistantTurnComponent({
   label,
   mode,
   showSeparator = false,
@@ -9032,6 +8789,7 @@ export function AssistantTurn({
     showExecutionInternals &&
     renderedSegments.length > 0 &&
     !lastSegmentIsOutput;
+  const showStreamingCursor = live && lastSegmentIsOutput;
 
   const [forceExpandToken, setForceExpandToken] = useState(0);
   const hasFileEdits = useMemo(
@@ -9134,6 +8892,8 @@ export function AssistantTurn({
                 : "",
             )
           : null}
+
+        {showStreamingCursor ? <StreamingCursor /> : null}
 
         {footerAccessory ? (
           <div className="mt-2 flex justify-start">{footerAccessory}</div>
@@ -9957,6 +9717,24 @@ function LiveStatusEllipsis() {
     >
       <DotmSquare3 dotSize={1} size={10} />
     </span>
+  );
+}
+
+function StreamingCursor() {
+  return (
+    <>
+      <style>{`
+        @keyframes streaming-cursor-blink {
+          0%, 50% { opacity: 1; }
+          50.01%, 100% { opacity: 0; }
+        }
+      `}</style>
+      <span
+        aria-hidden="true"
+        className="ml-0.5 inline-block h-[1em] w-[2px] -mb-[2px] translate-y-[3px] rounded-[1px] bg-foreground/65"
+        style={{ animation: "streaming-cursor-blink 1100ms steps(1) infinite" }}
+      />
+    </>
   );
 }
 
