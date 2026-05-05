@@ -1887,6 +1887,75 @@ test("runtime write_report tool writes a markdown report and persists it as a se
   }
 });
 
+test("runtime write_report tool writes reports into a custom workspace path", async () => {
+  const root = makeTempDir("hb-runtime-api-report-tools-custom-");
+  const workspaceRoot = path.join(root, "workspace");
+  const customWorkspacePath = path.join(root, "custom-workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    workspacePath: customWorkspacePath,
+  });
+  store.ensureRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: "input-1",
+  });
+
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/reports",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-input-id": "input-1",
+      },
+      payload: {
+        title: "Workspace custom path report",
+        filename: "workspace-custom-path-report",
+        content: "# Workspace custom path report\n\n- Saved in the registered workspace directory.\n",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(
+      response.json().file_path,
+      "outputs/reports/workspace-custom-path-report.md",
+    );
+    assert.equal(path.resolve(store.workspaceDir("workspace-1")), customWorkspacePath);
+    assert.ok(
+      fs.existsSync(
+        path.join(
+          customWorkspacePath,
+          "outputs/reports/workspace-custom-path-report.md",
+        ),
+      ),
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          workspaceRoot,
+          "workspace-1",
+          "outputs/reports/workspace-custom-path-report.md",
+        ),
+      ),
+      false,
+    );
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("runtime image generation tool writes a generated image into the workspace", async () => {
   const root = makeTempDir("hb-runtime-api-image-tools-");
   const workspaceRoot = path.join(root, "workspace");
