@@ -8497,7 +8497,7 @@ function UserTurn({
 
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
-      <div className="flex min-w-0 max-w-[80%] flex-col items-end gap-2">
+      <div className="relative flex min-w-0 max-w-[80%] flex-col items-end gap-2">
         {parsedQuotedSkills.skillIds.length > 0 ? (
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             {parsedQuotedSkills.skillIds.map((skillId) => (
@@ -8557,7 +8557,7 @@ function UserTurn({
           />
         ) : null}
         {canCopy || timeLabel ? (
-          <div className="flex items-center justify-end gap-2 pr-1 text-xs text-muted-foreground opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+          <div className="absolute -bottom-7 right-1 flex items-center gap-2 text-xs text-muted-foreground opacity-0 pointer-events-none transition-opacity duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
             {canCopy ? (
               <Button
                 type="button"
