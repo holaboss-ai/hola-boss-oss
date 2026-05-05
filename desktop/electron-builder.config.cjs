@@ -30,6 +30,8 @@ function resolveRuntimePlatform() {
 const runtimePlatform = resolveRuntimePlatform();
 const runtimeBundleDir = `runtime-${runtimePlatform}`;
 const runtimeBundlePath = path.join(__dirname, "out", runtimeBundleDir);
+const githubReleasesOwner = "holaboss-ai";
+const githubReleasesRepo = "holaOS-releases";
 const windowsSigningConfigured = Boolean(
   (process.env.WIN_CSC_LINK || process.env.CSC_LINK || "").trim(),
 );
@@ -83,7 +85,7 @@ const extraResources = [
 
 module.exports = {
   appId: "com.holaboss.workspace",
-  productName: "Holaboss",
+  productName: "holaOS",
   generateUpdatesFilesForAllChannels: true,
   directories: {
     output: "out/release"
@@ -97,7 +99,7 @@ module.exports = {
   asar: true,
   protocols: [
     {
-      name: "Holaboss Auth Callback",
+      name: "holaOS Auth Callback",
       schemes: [
         "ai.holaboss.app"
       ]
@@ -117,8 +119,8 @@ module.exports = {
   publish: [
     {
       provider: "github",
-      owner: "holaboss-ai",
-      repo: "holaOS",
+      owner: githubReleasesOwner,
+      repo: githubReleasesRepo,
       ...(releaseChannel === "beta" ? { channel: releaseChannel } : {})
     }
   ],

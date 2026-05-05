@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainPath = path.join(__dirname, "main.ts");
 const ensureRuntimeBundlePath = path.join(__dirname, "..", "scripts", "ensure-runtime-bundle.mjs");
+const desktopPackagePath = path.join(__dirname, "..", "package.json");
 const stageRuntimeBundlePath = path.join(__dirname, "..", "scripts", "stage-runtime-bundle.mjs");
 const runtimeBundlePath = path.join(__dirname, "..", "scripts", "runtime-bundle.mjs");
 
@@ -36,4 +37,12 @@ test("desktop runtime staging checks the bundled runtime requirement groups", as
   assert.match(stageSource, /runtimeBundleRequiredPathGroups\(runtimePlatform\)/);
   assert.match(runtimeBundleSource, /export function runtimeBundlePythonRelativePaths/);
   assert.match(runtimeBundleSource, /path\.join\("python-runtime", "bin", "python"\)/);
+});
+
+test("desktop packaging scripts build and stage local runtimes by default", async () => {
+  const packageJson = JSON.parse(await readFile(desktopPackagePath, "utf8"));
+
+  assert.match(packageJson.scripts["dist:mac"], /prepare:runtime:local:macos/);
+  assert.match(packageJson.scripts["dist:mac:dmg"], /prepare:runtime:local:macos/);
+  assert.match(packageJson.scripts["dist:win"], /prepare:runtime:local:windows/);
 });

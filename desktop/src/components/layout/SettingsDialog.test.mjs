@@ -16,6 +16,7 @@ test("settings dialog no longer surfaces automations; that surface lives in the 
   assert.doesNotMatch(source, /onCreateAutomationSchedule/);
   assert.doesNotMatch(source, /onEditAutomationSchedule/);
   assert.doesNotMatch(source, /onOpenAutomationRunSession/);
+  assert.match(source, /useWorkspaceDesktop/);
 });
 
 test("settings dialog settings section shows the app controls above appearance", async () => {
@@ -39,7 +40,7 @@ test("settings dialog settings section shows the app controls above appearance",
   assert.doesNotMatch(source, /if \(status\.downloaded\) \{\s*return \{[\s\S]*progressPercent: 100,/);
 
   const settingsSectionIndex = source.indexOf('activeSection === "settings" ? (');
-  const appLabelIndex = source.indexOf("Holaboss Desktop");
+  const appLabelIndex = source.indexOf("holaOS Desktop");
   const desktopUpdatesIndex = source.indexOf("Desktop updates");
   const betaUpdatesIndex = source.indexOf("Beta updates");
   const appearanceIndex = source.indexOf("Appearance");

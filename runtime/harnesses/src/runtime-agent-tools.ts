@@ -117,6 +117,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
+    id: "holaboss_update_workspace_instructions",
+    description:
+      "Read or update the root AGENTS.md file for durable workspace rules, recurring output templates, and lasting instruction-following constraints while preserving user-authored content outside the managed section.",
+    policy: "mutate"
+  },
+  {
     id: "skill",
     description:
       "Load a workspace skill by id or name and return its canonical skill block, including any declared tool or command grants.",

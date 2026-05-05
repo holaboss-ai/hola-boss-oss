@@ -117,13 +117,13 @@ const ABOUT_LINKS = [
     id: "docs",
     label: "Docs",
     icon: Info,
-    href: "https://github.com/holaboss-ai/holaOS",
+    href: "https://github.com/holaboss-ai/holaOS-releases",
   },
   {
     id: "help",
     label: "Get help",
     icon: CircleHelp,
-    href: "https://github.com/holaboss-ai/holaOS/issues",
+    href: "https://github.com/holaboss-ai/holaOS-releases/issues",
   },
 ] as const;
 
@@ -548,7 +548,7 @@ export function SettingsDialog({
               <div className="grid gap-6">
                 <SettingsSection title="App">
                   <SettingsCard>
-                    <SettingsRow label="Holaboss Desktop" description="Version">
+                    <SettingsRow label="holaOS Desktop" description="Version">
                       <Badge
                         variant="outline"
                         className="border-border bg-background/60 font-mono text-[11px] text-foreground"

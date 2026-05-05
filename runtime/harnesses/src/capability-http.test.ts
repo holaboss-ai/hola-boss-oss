@@ -122,3 +122,37 @@ test("runtime delegate-task client forwards use_user_browser_surface when explic
     ],
   });
 });
+
+test("runtime workspace-instructions client preserves explicit empty replacement content", async () => {
+  let capturedBody: Record<string, unknown> | null = null;
+
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    capturedBody =
+      typeof init?.body === "string"
+        ? (JSON.parse(init.body) as Record<string, unknown>)
+        : null;
+    return new Response(JSON.stringify({ changed: true }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  await executeRuntimeToolCapability({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    selectedModel: "openai/gpt-5.4",
+    toolId: "holaboss_update_workspace_instructions",
+    toolParams: {
+      op: "replace_managed_section",
+      content: "",
+    },
+    fetchImpl,
+  });
+
+  assert.deepEqual(capturedBody, {
+    op: "replace_managed_section",
+    content: "",
+  });
+});

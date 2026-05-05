@@ -1,8 +1,8 @@
 import { createWriteStream, existsSync } from "node:fs";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -15,17 +15,13 @@ import {
   runtimeBundleRequiredPathGroups
 } from "./runtime-bundle.mjs";
 
-const execFileAsync = promisify(execFile);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(scriptDir, "..");
 const runtimePlatform = resolveRuntimePlatform();
 const stageParentDir = path.join(repoRoot, "out");
 const stageDir = path.join(stageParentDir, runtimeBundleDirName(runtimePlatform));
 const defaultLocalRuntimeDir = path.join(os.tmpdir(), `holaboss-runtime-${runtimePlatform}-full`);
-const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/holaOS";
-const requestedReleaseTag = process.env.HOLABOSS_RUNTIME_RELEASE_TAG?.trim() || "";
-const runtimeReleaseAssetPrefix = `holaboss-runtime-${runtimePlatform}-`;
-const githubReleaseListPageSize = 50;
 
 function log(message) {
   process.stdout.write(`[stage-runtime] ${message}\n`);
@@ -101,144 +97,6 @@ async function downloadRuntimeTarball(url, destinationTarball) {
   await pipeline(Readable.fromWeb(response.body), createWriteStream(destinationTarball));
 }
 
-async function githubApiFetchJson(url, token) {
-  const headers = {
-    Accept: "application/vnd.github+json",
-    "User-Agent": "holaboss-desktop-runtime-stager"
-  };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const response = await fetch(url, { headers });
-
-  if (!response.ok) {
-    throw new Error(`GitHub API request failed (${response.status} ${response.statusText}) for ${url}`);
-  }
-
-  return response.json();
-}
-
-function normalizedReleaseTag(release) {
-  return typeof release?.tag_name === "string" ? release.tag_name.trim() : "";
-}
-
-function releasePublishedAt(release) {
-  const raw = typeof release?.published_at === "string" ? release.published_at.trim() : "";
-  if (!raw) {
-    return 0;
-  }
-  const parsed = Date.parse(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function releaseAssets(release) {
-  return Array.isArray(release?.assets) ? release.assets : [];
-}
-
-function findRuntimeReleaseAsset(release) {
-  return releaseAssets(release).find((candidate) => {
-    return (
-      typeof candidate?.name === "string" &&
-      candidate.name.startsWith(runtimeReleaseAssetPrefix) &&
-      candidate.name.endsWith(".tar.gz")
-    );
-  }) ?? null;
-}
-
-function isEligibleRelease(release) {
-  const tag = normalizedReleaseTag(release);
-  return Boolean(tag) && !release?.draft;
-}
-
-function isStableRelease(release) {
-  return isEligibleRelease(release) && !release?.prerelease;
-}
-
-function isPrerelease(release) {
-  return isEligibleRelease(release) && Boolean(release?.prerelease);
-}
-
-function isRequestedRelease(release) {
-  return requestedReleaseTag !== "" && normalizedReleaseTag(release) === requestedReleaseTag;
-}
-
-function sortReleasesByPublishedAtDescending(releases) {
-  return [...releases].sort(
-    (left, right) => releasePublishedAt(right) - releasePublishedAt(left),
-  );
-}
-
-async function downloadGithubReleaseAsset(url, destinationTarball, token) {
-  const headers = {
-    Accept: "application/octet-stream",
-    "User-Agent": "holaboss-desktop-runtime-stager"
-  };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const response = await fetch(url, { headers, redirect: "follow" });
-
-  if (!response.ok || !response.body) {
-    throw new Error(`Failed to download GitHub release asset (${response.status} ${response.statusText}).`);
-  }
-
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(destinationTarball));
-}
-
-async function stageFromGithubReleaseSelection(token) {
-  const [owner, repo] = sourceRepo.split("/");
-  const releaseUrl =
-    `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${githubReleaseListPageSize}`;
-  const releases = await githubApiFetchJson(releaseUrl, token);
-
-  if (!Array.isArray(releases)) {
-    throw new Error(`GitHub returned an invalid release list for ${sourceRepo}.`);
-  }
-
-  const sortedReleases = sortReleasesByPublishedAtDescending(releases);
-  const requestedRelease = sortedReleases.find((release) => {
-    return isRequestedRelease(release) && findRuntimeReleaseAsset(release);
-  }) ?? null;
-
-  const stableRelease = sortedReleases.find((release) => {
-    return isStableRelease(release) && findRuntimeReleaseAsset(release);
-  }) ?? null;
-
-  const prereleaseRelease = sortedReleases.find((release) => {
-    return isPrerelease(release) && findRuntimeReleaseAsset(release);
-  }) ?? null;
-
-  const release = requestedRelease ?? stableRelease ?? prereleaseRelease;
-  const asset = release ? findRuntimeReleaseAsset(release) : null;
-
-  if (!release || !asset) {
-    throw new Error(
-      `No runtime release asset matching ${runtimeReleaseAssetPrefix}*.tar.gz found in ${sourceRepo}.`
-    );
-  }
-
-  if (requestedReleaseTag && !requestedRelease) {
-    log(
-      `requested runtime release ${requestedReleaseTag} is unavailable; falling back to the latest eligible release asset`,
-    );
-  }
-
-  if (!requestedRelease && !stableRelease && prereleaseRelease) {
-    log(
-      `no stable release runtime asset was found; falling back to prerelease ${normalizedReleaseTag(prereleaseRelease)}`,
-    );
-  }
-
-  const releaseTag = normalizedReleaseTag(release) || "latest";
-  const downloadDir = await fs.mkdtemp(path.join(os.tmpdir(), "holaboss-runtime-release-"));
-  const downloadPath = path.join(downloadDir, asset.name);
-  log(`downloading runtime release asset ${asset.name} from release ${releaseTag}`);
-  await downloadGithubReleaseAsset(asset.url, downloadPath, token);
-  await extractRuntimeTarball(downloadPath);
-}
-
 async function validateStageDir() {
   for (const requiredGroup of runtimeBundleRequiredPathGroups(runtimePlatform)) {
     const matchingPath = await firstExistingPath(
@@ -261,7 +119,6 @@ async function stageRuntimeBundle() {
   const runtimeDir = process.env.HOLABOSS_RUNTIME_DIR?.trim();
   const runtimeTarball = process.env.HOLABOSS_RUNTIME_TARBALL?.trim();
   const runtimeBundleUrl = process.env.HOLABOSS_RUNTIME_BUNDLE_URL?.trim();
-  const githubToken = process.env.HOLABOSS_GITHUB_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim();
 
   await ensureCleanStageDir();
 
@@ -286,27 +143,15 @@ async function stageRuntimeBundle() {
     return;
   }
 
-  try {
-    await stageFromGithubReleaseSelection(githubToken);
-    await validateStageDir();
-    return;
-  } catch (error) {
-    if (!existsSync(defaultLocalRuntimeDir)) {
-      throw error;
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    log(`latest release staging failed, falling back to ${defaultLocalRuntimeDir}: ${message}`);
-  }
-
   if (existsSync(defaultLocalRuntimeDir)) {
+    log(`copying fallback runtime directory from ${defaultLocalRuntimeDir}`);
     await copyRuntimeDirectory(defaultLocalRuntimeDir);
     await validateStageDir();
     return;
   }
 
   throw new Error(
-    "No runtime bundle source found. Set HOLABOSS_RUNTIME_DIR, HOLABOSS_RUNTIME_TARBALL, HOLABOSS_RUNTIME_BUNDLE_URL, or make sure a release asset with the requested runtime tarball is reachable."
+    "No runtime bundle source found. Set HOLABOSS_RUNTIME_DIR, HOLABOSS_RUNTIME_TARBALL, or HOLABOSS_RUNTIME_BUNDLE_URL, or run npm run prepare:runtime:local first."
   );
 }
 

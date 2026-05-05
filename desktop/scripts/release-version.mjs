@@ -41,7 +41,7 @@ function releaseVersion(date, releaseNumber) {
 }
 
 function desktopReleaseTag(version) {
-  return `holaboss-desktop-${version}`;
+  return `holaOS-${version}`;
 }
 
 let releaseNumber = 1;

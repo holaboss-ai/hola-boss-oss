@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { app as electronApp } from "electron";
 
-electronApp.setName("Holaboss");
+electronApp.setName("holaOS");
 
 import * as Sentry from "@sentry/electron/main";
 
@@ -191,7 +191,7 @@ import {
   shouldTrackHistoryUrl as shouldTrackHistoryUrlUtil,
 } from "./browser-pane/utils.js";
 
-const APP_DISPLAY_NAME = "Holaboss";
+const APP_DISPLAY_NAME = "holaOS";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
@@ -249,7 +249,7 @@ const APP_THEMES = new Set([
 ]);
 const DEFAULT_APP_THEME = "amber-minimal-light";
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
-const GITHUB_RELEASES_REPO = "holaOS";
+const GITHUB_RELEASES_REPO = "holaOS-releases";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_SUPPORTED_PLATFORMS = new Set(["darwin", "win32"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
@@ -1750,7 +1750,7 @@ function isReleaseStyleAppVersion(version: string) {
 
 function currentDesktopReleaseTag() {
   const version = currentAppVersion();
-  return version ? `holaboss-desktop-${version}` : "";
+  return version ? `holaOS-${version}` : "";
 }
 
 function appUpdateSupported() {

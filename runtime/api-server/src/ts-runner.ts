@@ -127,6 +127,9 @@ const SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_resume_subagent",
   "holaboss_continue_subagent",
 ]);
+const MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS = new Set([
+  "holaboss_update_workspace_instructions",
+]);
 const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_delegate_task",
   "holaboss_get_subagent",
@@ -134,6 +137,7 @@ const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_cancel_subagent",
   "holaboss_resume_subagent",
   "holaboss_continue_subagent",
+  "holaboss_update_workspace_instructions",
   "holaboss_cronjobs_list",
   "holaboss_cronjobs_create",
   "holaboss_cronjobs_get",
@@ -142,7 +146,9 @@ const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
 ]);
 const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
   ...Array.from(MAIN_SESSION_RUNTIME_TOOL_IDS).filter(
-    (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+    (toolId) =>
+      !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId) &&
+      !MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS.has(toolId),
   ),
   "holaboss_onboarding_status",
   "holaboss_onboarding_complete",
@@ -1131,7 +1137,9 @@ function projectRuntimeToolIdsForSession(params: {
     return params.runtimeToolIds.filter((toolId) => allowed.has(toolId));
   }
   return params.runtimeToolIds.filter(
-    (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+    (toolId) =>
+      !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId) &&
+      !MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS.has(toolId),
   );
 }
 
@@ -1148,7 +1156,9 @@ function projectExtraToolIdsForSession(params: {
     new Set([
       ...defaultExtraTools(params.harnessId),
       ...params.extraToolIds.filter(
-        (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+        (toolId) =>
+          !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId) &&
+          !MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS.has(toolId),
       ),
     ]),
   );

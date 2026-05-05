@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
 
-test("desktop main process keeps Holaboss as the packaged app name and shows holaOS for macOS dev chrome", async () => {
+test("desktop main process uses holaOS as the packaged app name", async () => {
   const source = await readFile(mainSourcePath, "utf8");
 
-  assert.match(source, /const APP_DISPLAY_NAME = "Holaboss";/);
+  assert.match(source, /electronApp\.setName\("holaOS"\);/);
+  assert.match(source, /const APP_DISPLAY_NAME = "holaOS";/);
   assert.match(source, /const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";/);
   assert.match(
     source,
