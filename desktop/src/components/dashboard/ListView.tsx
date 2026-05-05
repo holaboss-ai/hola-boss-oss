@@ -1,10 +1,11 @@
 import { Rows3 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { ListViewSpec } from "@/lib/dashboardSchema";
 
 import { EmptyState } from "./EmptyState";
 import { formatSmartDate, looksLikeDateColumn } from "./format";
+import { RowDetailDialog } from "./RowDetailDialog";
 
 interface ListViewProps {
   view: ListViewSpec;
@@ -21,6 +22,14 @@ export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
   const metaIdx = view.meta ? columns.indexOf(view.meta) : -1;
   const metaIsDate = looksLikeDateColumn(view.meta);
   const [shownLimit, setShownLimit] = useState(500);
+  const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(
+    null,
+  );
+
+  const detailColumns = useMemo(
+    () => columns.map((name) => ({ name })),
+    [columns],
+  );
 
   if (primaryIdx < 0) {
     return (
@@ -50,7 +59,26 @@ export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
           // biome-ignore lint/suspicious/noArrayIndexKey: SQL row order is the natural key
           <li
             key={idx}
-            className="group flex items-baseline gap-3 px-1 py-2.5 transition-colors hover:bg-fg-4"
+            onClick={() => {
+              const obj: Record<string, unknown> = {};
+              for (let i = 0; i < columns.length; i += 1) {
+                obj[columns[i]] = row[i];
+              }
+              setSelectedRow(obj);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                const obj: Record<string, unknown> = {};
+                for (let i = 0; i < columns.length; i += 1) {
+                  obj[columns[i]] = row[i];
+                }
+                setSelectedRow(obj);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            className="group flex cursor-pointer items-baseline gap-3 px-1 py-2.5 transition-colors hover:bg-fg-4 focus-visible:bg-fg-4 focus-visible:outline-none"
           >
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium leading-snug text-foreground">
@@ -87,6 +115,22 @@ export function ListView({ view, columns, rows, emptyState }: ListViewProps) {
           </button>
         </li>
       ) : null}
+      <RowDetailDialog
+        open={selectedRow !== null}
+        onOpenChange={(next) => {
+          if (!next) setSelectedRow(null);
+        }}
+        title={
+          selectedRow ? String(selectedRow[view.primary] ?? "Details") : "Details"
+        }
+        subtitle={
+          selectedRow && view.secondary
+            ? String(selectedRow[view.secondary] ?? "")
+            : undefined
+        }
+        columns={detailColumns}
+        row={selectedRow ?? {}}
+      />
     </ul>
   );
 }
