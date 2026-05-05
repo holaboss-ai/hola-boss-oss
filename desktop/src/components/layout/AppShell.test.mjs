@@ -145,6 +145,64 @@ test("app shell passes the current app version into the settings dialog", async 
     source,
     /<SettingsDialog[\s\S]*workspaceCardsPerRow=\{controlCenterCardsPerRow\}[\s\S]*onWorkspaceCardsPerRowChange=\{setControlCenterCardsPerRow\}/,
   );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*composerModel=\{currentComposerSelectedModel\(runtimeConfig\)\}/,
+  );
+});
+
+test("app shell suppresses visible control-center completion toasts in favor of card highlights", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const \[controlCenterVisibleWorkspaceIds, setControlCenterVisibleWorkspaceIds\] =\s*useState<string\[]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /const \[\s*controlCenterHighlightedWorkspaceIds,\s*setControlCenterHighlightedWorkspaceIds,\s*\] =\s*useState<string\[]>\(\[]\);/,
+  );
+  assert.match(
+    source,
+    /const controlCenterCardComposerSubmissionWorkspaceIdsRef = useRef\(\s*new Set<string>\(\),\s*\);/,
+  );
+  assert.match(source, /const controlCenterVisibleWorkspaceIdSet = useMemo\(/);
+  assert.match(
+    source,
+    /const handleControlCenterVisibleWorkspaceIdsChange = useCallback\(\s*\(workspaceIds: string\[]\) => \{/,
+  );
+  assert.match(
+    source,
+    /const handleMarkControlCenterWorkspaceComposerSubmission = useCallback\(\s*\(workspaceId: string\) => \{/,
+  );
+  assert.match(
+    source,
+    /const handleControlCenterWorkspaceCompletion = useCallback\(\s*\(workspaceId: string\) => \{/,
+  );
+  assert.match(
+    source,
+    /const clearControlCenterWorkspaceHighlight = useCallback\(\s*\(workspaceId: string\) => \{/,
+  );
+  assert.match(
+    source,
+    /const isVisibleControlCenterMainSessionNotification =\s*activeShellView === "control_center"[\s\S]*item\.source_type === "main_session"[\s\S]*controlCenterVisibleWorkspaceIdSet\.has\(\s*normalizedNotificationWorkspaceId,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const consumeControlCenterComposerSubmissionSuppression = \(\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(isVisibleControlCenterMainSessionNotification\) \{[\s\S]*setControlCenterHighlightedWorkspaceIds\(\(current\) => \{[\s\S]*return \[normalizedNotificationWorkspaceId, \.\.\.current\];[\s\S]*state: "dismissed",/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*highlightedWorkspaceIds=\{controlCenterHighlightedWorkspaceIds\}[\s\S]*onVisibleWorkspaceIdsChange=\{\s*handleControlCenterVisibleWorkspaceIdsChange\s*\}[\s\S]*onCardComposerSubmit=\{\s*handleMarkControlCenterWorkspaceComposerSubmission\s*\}/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*onWorkspaceCompletion=\{handleControlCenterWorkspaceCompletion\}/,
+  );
 });
 
 test("app shell clears a consumed file explorer focus request", async () => {

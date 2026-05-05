@@ -12,9 +12,10 @@ test("workspace control center renders preview cards through the main chat turn 
 
   assert.match(
     source,
-    /import \{[\s\S]*ArtifactBrowserModal,[\s\S]*chatMessagesFromSessionState,[\s\S]*ConversationTurns,[\s\S]*type ArtifactBrowserFilter,[\s\S]*type ChatMessage,[\s\S]*\} from "@\/components\/panes\/ChatPane";/,
+    /import \{[\s\S]*ArtifactBrowserModal,[\s\S]*chatMessagesFromSessionState,[\s\S]*ConversationTurns,[\s\S]*historyMessagesInDisplayOrder,[\s\S]*inputIdFromMessageId,[\s\S]*turnInputIdsFromHistoryMessages,[\s\S]*type ChatMessage,[\s\S]*\} from "@\/components\/panes\/ChatPane";/,
   );
   assert.match(source, /<ConversationTurns/);
+  assert.match(source, /assistantFitToContent/);
   assert.match(source, /onOpenOutput=\{\(output\) =>/);
   assert.match(source, /onOpenOutput\(workspaceId, output\)/);
   assert.match(source, /const \[artifactBrowserOpen, setArtifactBrowserOpen\] = useState\(false\);/);
@@ -25,6 +26,90 @@ test("workspace control center renders preview cards through the main chat turn 
   assert.match(source, /setArtifactBrowserOpen\(true\);/);
   assert.match(source, /onOpenAllArtifacts=\{handleOpenArtifacts\}/);
   assert.match(source, /<ArtifactBrowserModal[\s\S]*layout="card"/);
+  assert.match(source, /composerModel: string \| null;/);
+  assert.match(source, /highlightedWorkspaceIds: readonly string\[];/);
+  assert.match(source, /onVisibleWorkspaceIdsChange: \(workspaceIds: string\[]\) => void;/);
+  assert.match(source, /onCardComposerSubmit: \(workspaceId: string\) => void;/);
+  assert.match(source, /onWorkspaceCompletion: \(workspaceId: string\) => void;/);
+});
+
+test("workspace control center queues card composer input with the resolved shell composer model", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(source, /composerModel,\s*hasUnreadCompletionHighlight,/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.queueSessionInput\(\{[\s\S]*priority: 0,[\s\S]*model: composerModel,/,
+  );
+  assert.match(source, /<WorkspaceControlCenterCard[\s\S]*composerModel=\{composerModel\}/);
+});
+
+test("workspace control center reports the visible page and highlights unseen completed cards", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(source, /hasUnreadCompletionHighlight: boolean;/);
+  assert.match(source, /const highlightedWorkspaceIdSet = useMemo\(/);
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*onVisibleWorkspaceIdsChange\([\s\S]*currentPageWorkspaces[\s\S]*\);\s*\}, \[currentPageWorkspaces, onVisibleWorkspaceIdsChange\]\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*return \(\) => \{\s*onVisibleWorkspaceIdsChange\(\[\]\);/,
+  );
+  assert.match(source, /onPointerDownCapture=\{\(\) => onSelectWorkspace\(workspaceId\)\}/);
+  assert.match(source, /onFocusCapture=\{\(\) => onSelectWorkspace\(workspaceId\)\}/);
+  assert.match(
+    source,
+    /hasUnreadCompletionHighlight[\s\S]*\?\s*"border-primary\/65 shadow-\[0_16px_48px_-24px_color-mix\(in_oklch,var\(--primary\)_44%,transparent\)\]"/,
+  );
+  assert.match(source, /hasUnreadCompletionHighlight=\{highlightedWorkspaceIdSet\.has\(/);
+  assert.match(source, /onCardComposerSubmit=\{onCardComposerSubmit\}/);
+  assert.match(source, /onCardComposerSubmit\(workspaceId\);/);
+  assert.match(source, /onWorkspaceCompletion=\{onWorkspaceCompletion\}/);
+});
+
+test("workspace control center signals visible completions directly from the card transcript controller", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const CONTROL_CENTER_RUNTIME_POLL_INTERVAL_MS = 750;/,
+  );
+  assert.match(source, /const hasHydratedSnapshotRef = useRef\(false\);/);
+  assert.match(source, /const latestAssistantMessageIdRef = useRef\(""\);/);
+  assert.match(source, /const lastSignaledCompletionKeyRef = useRef\(""\);/);
+  assert.match(
+    source,
+    /const lastTerminalRunOutcomeRef = useRef<"completed" \| "failed" \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const signalWorkspaceCompletion = useCallback\(\s*\(completionKey\?: string \| null\) => \{/,
+  );
+  assert.match(
+    source,
+    /onWorkspaceCompletion\(workspaceId\);/,
+  );
+  assert.match(
+    source,
+    /const shouldSignalSnapshotCompletion =[\s\S]*hasHydratedSnapshotRef\.current[\s\S]*!shouldAttachLiveRunStream[\s\S]*latestAssistantMessageId !== latestAssistantMessageIdRef\.current;/,
+  );
+  assert.match(source, /latestAssistantMessageIdRef\.current = latestAssistantMessageId;/);
+  assert.match(source, /hasHydratedSnapshotRef\.current = true;/);
+  assert.match(source, /if \(shouldSignalSnapshotCompletion\) \{\s*signalWorkspaceCompletion\(latestAssistantMessageId\);/);
+  assert.match(source, /payload\.type === "done"[\s\S]*signalWorkspaceCompletion\(/);
+  assert.match(source, /lastTerminalRunOutcomeRef\.current = "failed";/);
+  assert.match(source, /lastTerminalRunOutcomeRef\.current = "completed";/);
+  assert.match(source, /eventType === "run_completed"[\s\S]*signalWorkspaceCompletion\(/);
+  assert.match(
+    source,
+    /const lastTurnCompletedAt = \(\s*nextRuntimeState\?\.last_turn_completed_at \|\| ""\s*\)\.trim\(\);[\s\S]*signalWorkspaceCompletion\(/,
+  );
+  assert.match(
+    source,
+    /window\.setInterval\(\(\) => \{[\s\S]*pollRuntimeState\(\);[\s\S]*\}, CONTROL_CENTER_RUNTIME_POLL_INTERVAL_MS\);/,
+  );
 });
 
 test("workspace control center renders a live assistant placeholder in the chat pane instead of a working frame badge", async () => {
@@ -74,6 +159,108 @@ test("workspace control center retries terminal refreshes so completed replies d
   assert.match(source, /eventType === "run_failed"[\s\S]*scheduleTerminalRefresh\(\);/);
 });
 
+test("workspace control center commits the live assistant reply locally before terminal refresh reconciliation", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const pendingCommittedAssistantMessageRef =\s*useRef<PreviewChatMessage \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const liveAssistantTextRef = useRef\(""\);/,
+  );
+  assert.match(source, /liveAssistantTextRef\.current = liveAssistantText;/);
+  assert.match(
+    source,
+    /const commitLiveAssistantPreviewMessage = useCallback\(\s*\(inputId\?: string \| null\) => \{/,
+  );
+  assert.match(
+    source,
+    /id: normalizedInputId\s*\?\s*`assistant-\$\{normalizedInputId\}`\s*:\s*`assistant-preview-\$\{Date\.now\(\)\}`/,
+  );
+  assert.match(
+    source,
+    /pendingCommittedAssistantMessageRef\.current = nextMessage;/,
+  );
+  assert.match(
+    source,
+    /setMessages\(\(current\) => \{[\s\S]*current\.some\(\(message\) => message\.id === nextMessage\.id\)[\s\S]*trimPreviewMessages\(\[\.\.\.current, nextMessage\]\)/,
+  );
+  assert.match(source, /setLiveAssistantText\(""\);/);
+  assert.match(
+    source,
+    /const committed = commitLiveAssistantPreviewMessage\(finishedInputId\);/,
+  );
+  assert.match(
+    source,
+    /const committed = commitLiveAssistantPreviewMessage\(completedInputId\);/,
+  );
+  assert.match(
+    source,
+    /const completedInputId = \(nextRuntimeState\?\.current_input_id \|\| ""\)\.trim\(\);[\s\S]*const committed = commitLiveAssistantPreviewMessage\(completedInputId\);/,
+  );
+});
+
+test("workspace control center passively reconciles idle main-session follow-ups", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const CONTROL_CENTER_IDLE_RECONCILE_INTERVAL_MS = 2500;/,
+  );
+  assert.match(
+    source,
+    /function latestPreviewMessageId\(messages: PreviewChatMessage\[]\) \{/,
+  );
+  assert.match(
+    source,
+    /const messagesRef = useRef<PreviewChatMessage\[]>\(\[]\);/,
+  );
+  assert.match(source, /messagesRef\.current = messages;/);
+  assert.match(
+    source,
+    /const reconcileIdleMainSessionActivity = async \(\) => \{/,
+  );
+  assert.match(
+    source,
+    /document\.visibilityState !== "visible"/,
+  );
+  assert.match(
+    source,
+    /const shouldAttachAutonomousRun =[\s\S]*!activeStreamIdRef\.current[\s\S]*!pendingInputIdRef\.current[\s\S]*\["BUSY", "QUEUED"\]\.includes\(currentRuntimeStatus\);/,
+  );
+  assert.match(
+    source,
+    /await refreshSnapshot\(\{ attachStream: true \}\);/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.getSessionHistory\(\{[\s\S]*limit: 1,[\s\S]*order: "desc",/,
+  );
+  assert.match(
+    source,
+    /const latestDisplayedMessageId = latestPreviewMessageId\(messagesRef\.current\);/,
+  );
+  assert.match(
+    source,
+    /latestHistoryMessageId === latestDisplayedMessageId/,
+  );
+  assert.match(
+    source,
+    /await refreshSnapshot\(\{ attachStream: false \}\);/,
+  );
+  assert.match(
+    source,
+    /window\.setInterval\(\(\) => \{[\s\S]*reconcileIdleMainSessionActivity\(\);[\s\S]*\}, CONTROL_CENTER_IDLE_RECONCILE_INTERVAL_MS\);/,
+  );
+  assert.match(source, /window\.addEventListener\("focus", refreshVisibleMainSession\);/);
+  assert.match(
+    source,
+    /document\.addEventListener\("visibilitychange", refreshVisibleMainSession\);/,
+  );
+});
+
 test("workspace control center loads the latest main-session history slice and recent turn outputs", async () => {
   const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
 
@@ -85,6 +272,41 @@ test("workspace control center loads the latest main-session history slice and r
   assert.match(source, /window\.electronAPI\.workspace\.listMemoryUpdateProposals\(\{/);
   assert.match(source, /chatMessagesFromSessionState\(\{/);
   assert.match(source, /showExecutionInternals: false,/);
+});
+
+test("workspace control center suppresses the in-flight assistant history row when attaching a live stream", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const currentRuntimeInputId = \(\s*nextRuntimeState\?\.current_input_id \|\| ""\s*\)\.trim\(\);/,
+  );
+  assert.match(
+    source,
+    /const shouldAttachLiveRunStream =[\s\S]*options\?\.attachStream !== false[\s\S]*nextRuntimeCardState === "queued" \|\| nextRuntimeCardState === "working"/,
+  );
+  assert.match(
+    source,
+    /const renderedMessagesForDisplay =\s*shouldAttachLiveRunStream && currentRuntimeInputId\s*\?\s*nextMessages\.filter\(\s*\(message\) =>\s*message\.role !== "assistant" \|\|\s*inputIdFromMessageId\(message\.id, "assistant"\) !==\s*currentRuntimeInputId,\s*\)\s*:\s*nextMessages;/,
+  );
+  assert.match(source, /setMessages\(nextRenderedMessages\);/);
+  assert.match(
+    source,
+    /if \(shouldAttachLiveRunStream\) \{[\s\S]*includeHistory: Boolean\(currentRuntimeInputId\),/,
+  );
+  assert.match(
+    source,
+    /const pendingCommittedAssistantMessage =\s*pendingCommittedAssistantMessageRef\.current;/,
+  );
+  assert.match(
+    source,
+    /const nextRenderedMessages =[\s\S]*pendingCommittedAssistantMessage[\s\S]*!renderedMessagesForDisplay\.some\(\s*\(message\) => message\.id === pendingCommittedAssistantMessage\.id,\s*\)[\s\S]*trimPreviewMessages\(\[[\s\S]*pendingCommittedAssistantMessage,[\s\S]*\]\)/,
+  );
+  assert.match(
+    source,
+    /pendingCommittedAssistantMessageRef\.current = null;/,
+  );
+  assert.match(source, /setMessages\(nextRenderedMessages\);/);
 });
 
 test("workspace control center sizes cards to fit up to two visible rows before hitting a minimum height", async () => {

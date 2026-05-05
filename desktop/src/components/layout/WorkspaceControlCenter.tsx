@@ -22,6 +22,7 @@ import {
   ConversationTurns,
   type ArtifactBrowserFilter,
   historyMessagesInDisplayOrder,
+  inputIdFromMessageId,
   turnInputIdsFromHistoryMessages,
   type ChatMessage,
 } from "@/components/panes/ChatPane";
@@ -45,6 +46,8 @@ const WORKSPACE_CARD_VISIBLE_ROWS = 2;
 const CONTROL_CENTER_WHEEL_SWIPE_THRESHOLD_PX = 140;
 const CONTROL_CENTER_WHEEL_SWIPE_RESET_MS = 180;
 const CONTROL_CENTER_TERMINAL_REFRESH_DELAYS_MS = [150, 500, 1_500, 3_000];
+const CONTROL_CENTER_IDLE_RECONCILE_INTERVAL_MS = 2500;
+const CONTROL_CENTER_RUNTIME_POLL_INTERVAL_MS = 750;
 
 type PreviewChatMessage = ChatMessage & {
   optimistic?: boolean;
@@ -65,23 +68,32 @@ interface WorkspaceControlCenterProps {
   workspaces: WorkspaceRecordPayload[];
   selectedWorkspaceId: string | null;
   cardsPerRow: number;
+  composerModel: string | null;
+  highlightedWorkspaceIds: readonly string[];
   onSelectWorkspace: (workspaceId: string) => void;
   onEnterWorkspace: (workspaceId: string) => void;
   onOpenOutput: (
     workspaceId: string,
     output: WorkspaceOutputRecordPayload,
   ) => void;
+  onVisibleWorkspaceIdsChange: (workspaceIds: string[]) => void;
+  onCardComposerSubmit: (workspaceId: string) => void;
+  onWorkspaceCompletion: (workspaceId: string) => void;
 }
 
 interface WorkspaceCardProps {
   workspace: WorkspaceRecordPayload;
   isSelected: boolean;
+  composerModel: string | null;
+  hasUnreadCompletionHighlight: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onEnterWorkspace: (workspaceId: string) => void;
   onOpenOutput: (
     workspaceId: string,
     output: WorkspaceOutputRecordPayload,
   ) => void;
+  onCardComposerSubmit: (workspaceId: string) => void;
+  onWorkspaceCompletion: (workspaceId: string) => void;
 }
 
 type RuntimeCardState = "idle" | "queued" | "working" | "waiting" | "error";
@@ -103,6 +115,16 @@ function runtimeStateEffectiveStatus(
 
 function trimPreviewMessages(messages: PreviewChatMessage[]) {
   return messages.slice(-PREVIEW_MESSAGE_LIMIT);
+}
+
+function latestPreviewMessageId(messages: PreviewChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const messageId = messages[index]?.id?.trim() || "";
+    if (messageId) {
+      return messageId;
+    }
+  }
+  return "";
 }
 
 function compareTimestampsDescending(
@@ -228,9 +250,13 @@ function formatLastActivityLabel(value: string | null | undefined) {
 const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   workspace,
   isSelected,
+  composerModel,
+  hasUnreadCompletionHighlight,
   onSelectWorkspace,
   onEnterWorkspace,
   onOpenOutput,
+  onCardComposerSubmit,
+  onWorkspaceCompletion,
 }: WorkspaceCardProps) {
   const workspaceId = workspace.id;
   const workspaceFallbackActivityAt = fallbackWorkspaceActivityAt(workspace);
@@ -256,10 +282,18 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     WorkspaceOutputRecordPayload[]
   >([]);
   const previewScrollerRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<PreviewChatMessage[]>([]);
   const shouldStickToBottomRef = useRef(true);
   const activeStreamIdRef = useRef<string | null>(null);
   const pendingInputIdRef = useRef<string>("");
+  const pendingCommittedAssistantMessageRef =
+    useRef<PreviewChatMessage | null>(null);
+  const liveAssistantTextRef = useRef("");
   const terminalRefreshTimerIdsRef = useRef<number[]>([]);
+  const hasHydratedSnapshotRef = useRef(false);
+  const latestAssistantMessageIdRef = useRef("");
+  const lastSignaledCompletionKeyRef = useRef("");
+  const lastTerminalRunOutcomeRef = useRef<"completed" | "failed" | null>(null);
   const disposedRef = useRef(false);
 
   const workspaceUnavailable = workspace.folder_state === "missing";
@@ -310,6 +344,23 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     terminalRefreshTimerIdsRef.current = [];
   }, []);
 
+  const signalWorkspaceCompletion = useCallback(
+    (completionKey?: string | null) => {
+      const normalizedCompletionKey = (completionKey || "").trim();
+      if (
+        normalizedCompletionKey &&
+        lastSignaledCompletionKeyRef.current === normalizedCompletionKey
+      ) {
+        return;
+      }
+      if (normalizedCompletionKey) {
+        lastSignaledCompletionKeyRef.current = normalizedCompletionKey;
+      }
+      onWorkspaceCompletion(workspaceId);
+    },
+    [onWorkspaceCompletion, workspaceId],
+  );
+
   const openLiveStream = useCallback(
     async (params: {
       sessionId: string;
@@ -339,6 +390,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       }
       activeStreamIdRef.current = stream.streamId;
       pendingInputIdRef.current = (params.inputId || "").trim();
+      lastTerminalRunOutcomeRef.current = null;
     },
     [closeActiveStream, workspaceId],
   );
@@ -433,9 +485,57 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         runtimeStates.items.find((item) => item.session_id === sessionId) ??
         null;
       const nextRuntimeCardState = previewStatusFromRuntimeState(nextRuntimeState);
+      const currentRuntimeInputId = (
+        nextRuntimeState?.current_input_id || ""
+      ).trim();
+      const shouldAttachLiveRunStream =
+        options?.attachStream !== false &&
+        (nextRuntimeCardState === "queued" || nextRuntimeCardState === "working");
+      const renderedMessagesForDisplay =
+        shouldAttachLiveRunStream && currentRuntimeInputId
+          ? nextMessages.filter(
+              (message) =>
+                message.role !== "assistant" ||
+                inputIdFromMessageId(message.id, "assistant") !==
+                  currentRuntimeInputId,
+            )
+          : nextMessages;
+      const pendingCommittedAssistantMessage =
+        pendingCommittedAssistantMessageRef.current;
+      const nextRenderedMessages =
+        pendingCommittedAssistantMessage &&
+        !renderedMessagesForDisplay.some(
+          (message) => message.id === pendingCommittedAssistantMessage.id,
+        )
+          ? trimPreviewMessages([
+              ...renderedMessagesForDisplay,
+              pendingCommittedAssistantMessage,
+            ])
+          : renderedMessagesForDisplay;
+      if (
+        pendingCommittedAssistantMessage &&
+        renderedMessagesForDisplay.some(
+          (message) => message.id === pendingCommittedAssistantMessage.id,
+        )
+      ) {
+        pendingCommittedAssistantMessageRef.current = null;
+      }
+
+      const latestAssistantMessageId =
+        [...nextRenderedMessages]
+          .reverse()
+          .find((message) => message.role === "assistant")
+          ?.id?.trim() || "";
+      const shouldSignalSnapshotCompletion =
+        hasHydratedSnapshotRef.current &&
+        !shouldAttachLiveRunStream &&
+        Boolean(latestAssistantMessageId) &&
+        latestAssistantMessageId !== latestAssistantMessageIdRef.current;
+      latestAssistantMessageIdRef.current = latestAssistantMessageId;
+      hasHydratedSnapshotRef.current = true;
 
       setMainSession(session);
-      setMessages(nextMessages);
+      setMessages(nextRenderedMessages);
       setRuntimeState(nextRuntimeState);
       setRuntimeCardState(nextRuntimeCardState);
       setIsResponding(
@@ -451,14 +551,11 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       );
       setErrorMessage("");
 
-      if (
-        options?.attachStream !== false &&
-        (nextRuntimeCardState === "queued" || nextRuntimeCardState === "working")
-      ) {
+      if (shouldAttachLiveRunStream) {
         await openLiveStream({
           sessionId,
-          inputId: nextRuntimeState?.current_input_id ?? undefined,
-          includeHistory: Boolean(nextRuntimeState?.current_input_id),
+          inputId: currentRuntimeInputId || undefined,
+          includeHistory: Boolean(currentRuntimeInputId),
         }).catch((error) => {
           if (disposedRef.current) {
             return;
@@ -471,9 +568,13 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         await closeActiveStream("control_center_snapshot_idle");
       }
 
+      if (shouldSignalSnapshotCompletion) {
+        signalWorkspaceCompletion(latestAssistantMessageId);
+      }
+
       setIsLoading(false);
     },
-    [closeActiveStream, openLiveStream, workspaceId],
+    [closeActiveStream, openLiveStream, signalWorkspaceCompletion, workspaceId],
   );
 
   const scheduleTerminalRefresh = useCallback(() => {
@@ -515,6 +616,44 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   }, [clearScheduledTerminalRefreshes, closeActiveStream, refreshSnapshot]);
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    liveAssistantTextRef.current = liveAssistantText;
+  }, [liveAssistantText]);
+
+  const commitLiveAssistantPreviewMessage = useCallback(
+    (inputId?: string | null) => {
+      const text = liveAssistantTextRef.current;
+      if (!text.trim()) {
+        return false;
+      }
+      const normalizedInputId = (inputId || pendingInputIdRef.current || "").trim();
+      const nextMessage: PreviewChatMessage = {
+        id: normalizedInputId
+          ? `assistant-${normalizedInputId}`
+          : `assistant-preview-${Date.now()}`,
+        role: "assistant",
+        text,
+        tone: "default",
+        createdAt: new Date().toISOString(),
+      };
+      pendingCommittedAssistantMessageRef.current = nextMessage;
+      setMessages((current) => {
+        if (current.some((message) => message.id === nextMessage.id)) {
+          return current;
+        }
+        return trimPreviewMessages([...current, nextMessage]);
+      });
+      setLiveAssistantText("");
+      setLiveAgentStatus("");
+      return true;
+    },
+    [],
+  );
+
+  useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
       (payload) => {
         const currentStreamId = activeStreamIdRef.current;
@@ -523,6 +662,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         }
 
         if (payload.type === "error") {
+          lastTerminalRunOutcomeRef.current = "failed";
           setErrorMessage(payload.error || "The workspace stream failed.");
           setIsResponding(false);
           setRuntimeCardState("error");
@@ -532,8 +672,20 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         }
 
         if (payload.type === "done") {
+          const finishedInputId = pendingInputIdRef.current;
+          const lastTerminalRunOutcome = lastTerminalRunOutcomeRef.current;
           activeStreamIdRef.current = null;
           pendingInputIdRef.current = "";
+          const committed = commitLiveAssistantPreviewMessage(finishedInputId);
+          if (
+            committed ||
+            (lastTerminalRunOutcome !== "failed" && Boolean(finishedInputId))
+          ) {
+            signalWorkspaceCompletion(
+              finishedInputId ? `assistant-${finishedInputId}` : null,
+            );
+          }
+          lastTerminalRunOutcomeRef.current = null;
           setIsResponding(false);
           void refreshSnapshot({ attachStream: false }).catch(() => undefined);
           scheduleTerminalRefresh();
@@ -584,11 +736,13 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         }
 
         if (eventType === "run_failed") {
+          lastTerminalRunOutcomeRef.current = "failed";
+          const failedInputId = inputId || pendingInputIdRef.current;
           activeStreamIdRef.current = null;
           pendingInputIdRef.current = "";
+          commitLiveAssistantPreviewMessage(failedInputId);
           setIsResponding(false);
           setRuntimeCardState("error");
-          setLiveAssistantText("");
           setLiveAgentStatus("");
           setErrorMessage(runFailedDetail(eventPayload));
           void refreshSnapshot({ attachStream: false }).catch(() => undefined);
@@ -597,11 +751,18 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         }
 
         if (eventType === "run_completed") {
+          lastTerminalRunOutcomeRef.current = "completed";
+          const completedInputId = inputId || pendingInputIdRef.current;
           activeStreamIdRef.current = null;
           pendingInputIdRef.current = "";
+          const committed = commitLiveAssistantPreviewMessage(completedInputId);
+          if (committed || Boolean(completedInputId)) {
+            signalWorkspaceCompletion(
+              completedInputId ? `assistant-${completedInputId}` : null,
+            );
+          }
           setIsResponding(false);
           setRuntimeCardState("idle");
-          setLiveAssistantText("");
           setLiveAgentStatus("");
           void refreshSnapshot({ attachStream: false }).catch(() => undefined);
           scheduleTerminalRefresh();
@@ -612,7 +773,13 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     return () => {
       unsubscribe();
     };
-  }, [clearScheduledTerminalRefreshes, refreshSnapshot, scheduleTerminalRefresh]);
+  }, [
+    clearScheduledTerminalRefreshes,
+    commitLiveAssistantPreviewMessage,
+    refreshSnapshot,
+    scheduleTerminalRefresh,
+    signalWorkspaceCompletion,
+  ]);
 
   useEffect(() => {
     if (!isResponding || !mainSession?.session_id) {
@@ -650,8 +817,19 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         if (activeStreamIdRef.current) {
           await closeActiveStream("control_center_runtime_terminal");
         }
+        const completedInputId = (nextRuntimeState?.current_input_id || "").trim();
+        const committed = commitLiveAssistantPreviewMessage(completedInputId);
+        const lastTurnCompletedAt = (
+          nextRuntimeState?.last_turn_completed_at || ""
+        ).trim();
+        if (committed || Boolean(lastTurnCompletedAt)) {
+          signalWorkspaceCompletion(
+            completedInputId
+              ? `assistant-${completedInputId}`
+              : lastTurnCompletedAt || null,
+          );
+        }
         setIsResponding(false);
-        setLiveAssistantText("");
         setLiveAgentStatus("");
         void refreshSnapshot({ attachStream: false }).catch(() => undefined);
         scheduleTerminalRefresh();
@@ -665,7 +843,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     void pollRuntimeState();
     const timer = window.setInterval(() => {
       void pollRuntimeState();
-    }, 2000);
+    }, CONTROL_CENTER_RUNTIME_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
@@ -673,11 +851,110 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     };
   }, [
     closeActiveStream,
+    commitLiveAssistantPreviewMessage,
     isResponding,
     mainSession,
     refreshSnapshot,
     scheduleTerminalRefresh,
+    signalWorkspaceCompletion,
     workspaceId,
+  ]);
+
+  useEffect(() => {
+    const sessionId = (mainSession?.session_id || "").trim();
+    if (!sessionId || isLoading || isResponding || workspaceUnavailable) {
+      return;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const reconcileIdleMainSessionActivity = async () => {
+      if (cancelled || inFlight || document.visibilityState !== "visible") {
+        return;
+      }
+
+      inFlight = true;
+      try {
+        const runtimeStates =
+          await window.electronAPI.workspace.listRuntimeStates(workspaceId);
+        if (cancelled || disposedRef.current) {
+          return;
+        }
+
+        const currentRuntimeState =
+          runtimeStates.items.find((item) => item.session_id === sessionId) ?? null;
+        const currentRuntimeStatus =
+          runtimeStateEffectiveStatus(currentRuntimeState);
+        const currentRuntimeInputId = (
+          currentRuntimeState?.current_input_id || ""
+        ).trim();
+        const shouldAttachAutonomousRun =
+          !activeStreamIdRef.current &&
+          !pendingInputIdRef.current &&
+          Boolean(currentRuntimeInputId) &&
+          ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
+        if (shouldAttachAutonomousRun) {
+          await refreshSnapshot({ attachStream: true });
+          return;
+        }
+
+        const latestHistory = await window.electronAPI.workspace.getSessionHistory({
+          workspaceId,
+          sessionId,
+          limit: 1,
+          offset: 0,
+          order: "desc",
+        });
+        if (cancelled || disposedRef.current) {
+          return;
+        }
+
+        const latestHistoryMessageId =
+          historyMessagesInDisplayOrder(latestHistory.messages, "desc")[0]
+            ?.id?.trim() || "";
+        const latestDisplayedMessageId = latestPreviewMessageId(messagesRef.current);
+        if (
+          !latestHistoryMessageId ||
+          latestHistoryMessageId === latestDisplayedMessageId
+        ) {
+          return;
+        }
+
+        await refreshSnapshot({ attachStream: false });
+      } catch {
+        // Ignore passive refresh failures; focus/visibility and subsequent polls will retry.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void reconcileIdleMainSessionActivity();
+    const intervalId = window.setInterval(() => {
+      void reconcileIdleMainSessionActivity();
+    }, CONTROL_CENTER_IDLE_RECONCILE_INTERVAL_MS);
+    const refreshVisibleMainSession = () => {
+      void reconcileIdleMainSessionActivity();
+    };
+    window.addEventListener("focus", refreshVisibleMainSession);
+    document.addEventListener("visibilitychange", refreshVisibleMainSession);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleMainSession);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisibleMainSession,
+      );
+    };
+  }, [
+    isLoading,
+    isResponding,
+    mainSession?.session_id,
+    refreshSnapshot,
+    workspaceId,
+    workspaceUnavailable,
   ]);
 
   useEffect(() => {
@@ -733,6 +1010,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
         attachments: null,
         session_id: sessionId,
         priority: 0,
+        model: composerModel,
       });
       if (disposedRef.current) {
         return;
@@ -758,6 +1036,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       setRuntimeCardState(
         queued.status.trim().toUpperCase() === "QUEUED" ? "queued" : "working",
       );
+      onCardComposerSubmit(workspaceId);
       await openLiveStream({
         sessionId: queued.session_id,
         inputId: queued.input_id,
@@ -804,10 +1083,14 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
 
   return (
     <Card
+      onPointerDownCapture={() => onSelectWorkspace(workspaceId)}
+      onFocusCapture={() => onSelectWorkspace(workspaceId)}
       className={cn(
         "relative h-full min-h-0 min-w-0 border border-border/70 bg-card py-0 shadow-md",
-        isSelected
-          ? "border-primary/45 shadow-[0_16px_48px_-24px_color-mix(in_oklch,var(--primary)_32%,transparent)]"
+        hasUnreadCompletionHighlight
+          ? "border-primary/65 shadow-[0_16px_48px_-24px_color-mix(in_oklch,var(--primary)_44%,transparent)]"
+          : isSelected
+          ? "border-border/90 shadow-[0_12px_28px_-24px_color-mix(in_oklch,var(--foreground)_18%,transparent)]"
           : "",
       )}
     >
@@ -871,6 +1154,7 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
                 assistantLabel={workspace.name}
                 assistantMode="control_center_preview"
                 showExecutionInternals={false}
+                assistantFitToContent
                 onOpenOutput={(output) => onOpenOutput(workspaceId, output)}
                 onOpenAllArtifacts={handleOpenArtifacts}
                 collapsedTraceByStepId={{}}
@@ -965,9 +1249,14 @@ export function WorkspaceControlCenter({
   workspaces,
   selectedWorkspaceId,
   cardsPerRow,
+  composerModel,
+  highlightedWorkspaceIds,
   onSelectWorkspace,
   onEnterWorkspace,
   onOpenOutput,
+  onVisibleWorkspaceIdsChange,
+  onCardComposerSubmit,
+  onWorkspaceCompletion,
 }: WorkspaceControlCenterProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [gridColumnCount, setGridColumnCount] = useState(() =>
@@ -1005,6 +1294,29 @@ export function WorkspaceControlCenter({
     return pages;
   }, [cardsPerPage, sortedWorkspaces]);
   const currentPageWorkspaces = pagedWorkspaces[currentPage] ?? [];
+  const highlightedWorkspaceIdSet = useMemo(
+    () =>
+      new Set(
+        highlightedWorkspaceIds
+          .map((workspaceId) => workspaceId.trim())
+          .filter(Boolean),
+      ),
+    [highlightedWorkspaceIds],
+  );
+
+  useEffect(() => {
+    onVisibleWorkspaceIdsChange(
+      currentPageWorkspaces
+        .map((workspace) => workspace.id.trim())
+        .filter(Boolean),
+    );
+  }, [currentPageWorkspaces, onVisibleWorkspaceIdsChange]);
+
+  useEffect(() => {
+    return () => {
+      onVisibleWorkspaceIdsChange([]);
+    };
+  }, [onVisibleWorkspaceIdsChange]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1186,7 +1498,13 @@ export function WorkspaceControlCenter({
 
   return (
     <section className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_10%,rgba(125,161,255,0.14),transparent_26%),radial-gradient(circle_at_82%_14%,rgba(251,191,36,0.1),transparent_22%),radial-gradient(circle_at_50%_100%,rgba(16,185,129,0.08),transparent_30%)]" />
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at 12% 10%, color-mix(in oklch, var(--primary) 14%, transparent), transparent 26%), radial-gradient(circle at 82% 14%, color-mix(in oklch, var(--secondary) 12%, transparent), transparent 22%), radial-gradient(circle at 50% 100%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 30%)",
+        }}
+      />
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-0 px-0 sm:gap-px sm:px-0.5">
           {pageCount > 1 ? (
@@ -1230,9 +1548,15 @@ export function WorkspaceControlCenter({
                   key={workspace.id}
                   workspace={workspace}
                   isSelected={workspace.id === (selectedWorkspaceId || "").trim()}
+                  composerModel={composerModel}
+                  hasUnreadCompletionHighlight={highlightedWorkspaceIdSet.has(
+                    workspace.id.trim(),
+                  )}
                   onSelectWorkspace={onSelectWorkspace}
                   onEnterWorkspace={onEnterWorkspace}
                   onOpenOutput={onOpenOutput}
+                  onCardComposerSubmit={onCardComposerSubmit}
+                  onWorkspaceCompletion={onWorkspaceCompletion}
                 />
               ))}
             </div>

@@ -8483,6 +8483,7 @@ export function UserTurn({
   const copyResetTimerRef = useRef<number | null>(null);
   const timeLabel = chatMessageTimeLabel(createdAt);
   const canCopy = text.trim().length > 0;
+  const showHoverFooter = canCopy || Boolean(timeLabel);
   const parsedQuotedSkills = useMemo(
     () => parseSerializedQuotedSkillPrompt(text),
     [text],
@@ -8532,7 +8533,9 @@ export function UserTurn({
 
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
-      <div className="relative flex min-w-0 max-w-[80%] flex-col items-end gap-2">
+      <div
+        className={`relative z-0 flex min-w-0 max-w-[80%] flex-col items-end gap-2 group-hover/user-turn:z-10 group-focus-within/user-turn:z-10 ${showHoverFooter ? "pb-7" : ""}`.trim()}
+      >
         {parsedQuotedSkills.skillIds.length > 0 ? (
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             {parsedQuotedSkills.skillIds.map((skillId) => (
@@ -8591,8 +8594,8 @@ export function UserTurn({
             onPreview={onPreviewAttachment}
           />
         ) : null}
-        {canCopy || timeLabel ? (
-          <div className="absolute -bottom-7 right-1 flex items-center gap-2 text-xs text-muted-foreground opacity-0 pointer-events-none transition-opacity duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+        {showHoverFooter ? (
+          <div className="absolute bottom-0 right-1 flex w-max min-w-max max-w-none items-center gap-2 whitespace-nowrap text-xs text-muted-foreground opacity-0 pointer-events-none transition-opacity duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
             {canCopy ? (
               <Button
                 type="button"
@@ -8616,7 +8619,9 @@ export function UserTurn({
               </Button>
             ) : null}
             {timeLabel ? (
-              <span className="select-none tabular-nums">{timeLabel}</span>
+              <span className="select-none whitespace-nowrap tabular-nums">
+                {timeLabel}
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -8922,6 +8927,7 @@ export function AssistantTurn({
   mode,
   showSeparator = false,
   showExecutionInternals = true,
+  fitToContent = false,
   text,
   tone = "default",
   segments,
@@ -8950,6 +8956,7 @@ export function AssistantTurn({
   mode: string;
   showSeparator?: boolean;
   showExecutionInternals?: boolean;
+  fitToContent?: boolean;
   text: string;
   tone?: ChatMessage["tone"];
   segments: ChatAssistantSegment[];
@@ -9025,7 +9032,6 @@ export function AssistantTurn({
     showExecutionInternals &&
     renderedSegments.length > 0 &&
     !lastSegmentIsOutput;
-  const showStreamingCursor = live && lastSegmentIsOutput;
 
   const [forceExpandToken, setForceExpandToken] = useState(0);
   const hasFileEdits = useMemo(
@@ -9065,7 +9071,13 @@ export function AssistantTurn({
     <div
       className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-4" : ""}`.trim()}
     >
-      <article className="min-w-0 w-full max-w-4xl rounded-lg bg-muted/60 px-3 py-2">
+      <article
+        className={
+          fitToContent
+            ? "min-w-0 inline-flex w-fit max-w-full flex-col rounded-lg bg-muted/60 px-3 py-2"
+            : "min-w-0 w-full max-w-4xl rounded-lg bg-muted/60 px-3 py-2"
+        }
+      >
         {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
         {renderedSegments.map((segment, index) =>
@@ -9122,8 +9134,6 @@ export function AssistantTurn({
                 : "",
             )
           : null}
-
-        {showStreamingCursor ? <StreamingCursor /> : null}
 
         {footerAccessory ? (
           <div className="mt-2 flex justify-start">{footerAccessory}</div>
@@ -9610,6 +9620,7 @@ export function ConversationTurns<Message extends ChatMessage>({
   assistantLabel,
   assistantMode,
   showExecutionInternals,
+  assistantFitToContent = false,
   onPreviewAttachment,
   onOpenOutput,
   onOpenAllArtifacts,
@@ -9633,6 +9644,7 @@ export function ConversationTurns<Message extends ChatMessage>({
   assistantLabel: string;
   assistantMode: string;
   showExecutionInternals: boolean;
+  assistantFitToContent?: boolean;
   onPreviewAttachment?: (attachment: AttachmentListItem) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onOpenAllArtifacts: (outputs: WorkspaceOutputRecordPayload[]) => void;
@@ -9685,6 +9697,7 @@ export function ConversationTurns<Message extends ChatMessage>({
               mode={assistantMode}
               showSeparator={index > 0}
               showExecutionInternals={showExecutionInternals}
+              fitToContent={assistantFitToContent}
               text={message.text}
               tone={message.tone ?? "default"}
               segments={message.segments ?? []}
@@ -9730,6 +9743,7 @@ export function ConversationTurns<Message extends ChatMessage>({
           mode={assistantMode}
           showSeparator={messages.length > 0}
           showExecutionInternals={showExecutionInternals}
+          fitToContent={assistantFitToContent}
           text={liveAssistantTurn.text}
           tone={liveAssistantTurn.tone ?? "default"}
           segments={liveAssistantTurn.segments}
@@ -9943,24 +9957,6 @@ function LiveStatusEllipsis() {
     >
       <DotmSquare3 dotSize={1} size={10} />
     </span>
-  );
-}
-
-function StreamingCursor() {
-  return (
-    <>
-      <style>{`
-        @keyframes streaming-cursor-blink {
-          0%, 50% { opacity: 1; }
-          50.01%, 100% { opacity: 0; }
-        }
-      `}</style>
-      <span
-        aria-hidden="true"
-        className="ml-0.5 inline-block h-[1em] w-[2px] -mb-[2px] translate-y-[3px] rounded-[1px] bg-foreground/65"
-        style={{ animation: "streaming-cursor-blink 1100ms steps(1) infinite" }}
-      />
-    </>
   );
 }
 

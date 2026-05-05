@@ -1522,6 +1522,12 @@ function AppShellContent() {
   const [toastNotifications, setToastNotifications] = useState<
     RuntimeNotificationRecordPayload[]
   >([]);
+  const [controlCenterVisibleWorkspaceIds, setControlCenterVisibleWorkspaceIds] =
+    useState<string[]>([]);
+  const [
+    controlCenterHighlightedWorkspaceIds,
+    setControlCenterHighlightedWorkspaceIds,
+  ] = useState<string[]>([]);
   const [taskProposalToastNotifications, setTaskProposalToastNotifications] =
     useState<RuntimeNotificationRecordPayload[]>([]);
   const [devNotificationToastPreview, setDevNotificationToastPreview] =
@@ -1534,6 +1540,9 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
+  const controlCenterCardComposerSubmissionWorkspaceIdsRef = useRef(
+    new Set<string>(),
+  );
   const nativeRuntimeNotificationAttemptedAtRef = useRef(
     new Map<string, number>(),
   );
@@ -1620,6 +1629,44 @@ function AppShellContent() {
       toastNotifications,
     ],
   );
+  const controlCenterVisibleWorkspaceIdSet = useMemo(
+    () =>
+      new Set(
+        controlCenterVisibleWorkspaceIds
+          .map((workspaceId) => workspaceId.trim())
+          .filter(Boolean),
+      ),
+    [controlCenterVisibleWorkspaceIds],
+  );
+
+  useEffect(() => {
+    const activeWorkspaceIds = new Set(
+      workspaces
+        .map((workspace) => workspace.id.trim())
+        .filter(Boolean),
+    );
+    setControlCenterHighlightedWorkspaceIds((current) => {
+      const next = current.filter((workspaceId) =>
+        activeWorkspaceIds.has(workspaceId),
+      );
+      return next.length === current.length ? current : next;
+    });
+    setControlCenterVisibleWorkspaceIds((current) => {
+      const next = current.filter((workspaceId) =>
+        activeWorkspaceIds.has(workspaceId),
+      );
+      return next.length === current.length ? current : next;
+    });
+    for (const workspaceId of [
+      ...controlCenterCardComposerSubmissionWorkspaceIdsRef.current,
+    ]) {
+      if (!activeWorkspaceIds.has(workspaceId)) {
+        controlCenterCardComposerSubmissionWorkspaceIdsRef.current.delete(
+          workspaceId,
+        );
+      }
+    }
+  }, [workspaces]);
   const runtimeNotificationById = useMemo(
     () =>
       new Map(
@@ -2212,6 +2259,26 @@ function AppShellContent() {
           continue;
         }
 
+        const normalizedNotificationWorkspaceId = item.workspace_id.trim();
+        const isVisibleControlCenterMainSessionNotification =
+          activeShellView === "control_center" &&
+          item.source_type === "main_session" &&
+          Boolean(normalizedNotificationWorkspaceId) &&
+          controlCenterVisibleWorkspaceIdSet.has(
+            normalizedNotificationWorkspaceId,
+          );
+        const consumeControlCenterComposerSubmissionSuppression = () => {
+          if (
+            item.source_type !== "main_session" ||
+            !normalizedNotificationWorkspaceId
+          ) {
+            return false;
+          }
+          return controlCenterCardComposerSubmissionWorkspaceIdsRef.current.delete(
+            normalizedNotificationWorkspaceId,
+          );
+        };
+
         if (
           shouldShowNativeRuntimeNotification(item, isWindowMinimized)
         ) {
@@ -2228,6 +2295,7 @@ function AppShellContent() {
             sessionId: notificationTargetSessionId(item),
           });
           if (shown) {
+            consumeControlCenterComposerSubmissionSuppression();
             seenNotificationIdsRef.current.add(item.id);
             nativeRuntimeNotificationAttemptedAtRef.current.delete(item.id);
             try {
@@ -2241,7 +2309,30 @@ function AppShellContent() {
           continue;
         }
 
+        if (isVisibleControlCenterMainSessionNotification) {
+          const suppressHighlight =
+            consumeControlCenterComposerSubmissionSuppression();
+          seenNotificationIdsRef.current.add(item.id);
+          if (!suppressHighlight) {
+            setControlCenterHighlightedWorkspaceIds((current) => {
+              if (current.includes(normalizedNotificationWorkspaceId)) {
+                return current;
+              }
+              return [normalizedNotificationWorkspaceId, ...current];
+            });
+          }
+          try {
+            await window.electronAPI.workspace.updateNotification(item.id, {
+              state: "dismissed",
+            });
+          } catch {
+            // Ignore transient dismissal failures in the shell.
+          }
+          continue;
+        }
+
         if (shouldDismissVisibleRuntimeNotification(item, selectedWorkspaceId)) {
+          consumeControlCenterComposerSubmissionSuppression();
           seenNotificationIdsRef.current.add(item.id);
           try {
             await window.electronAPI.workspace.updateNotification(item.id, {
@@ -2257,6 +2348,7 @@ function AppShellContent() {
           continue;
         }
 
+        consumeControlCenterComposerSubmissionSuppression();
         seenNotificationIdsRef.current.add(item.id);
         setToastNotifications((current) => {
           if (current.some((existing) => existing.id === item.id)) {
@@ -2268,7 +2360,11 @@ function AppShellContent() {
     } catch {
       // Notification polling should stay silent when the runtime is restarting.
     }
-  }, [selectedWorkspaceId]);
+  }, [
+    activeShellView,
+    controlCenterVisibleWorkspaceIdSet,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
     const activeNotificationIds = new Set(
@@ -3373,11 +3469,88 @@ function AppShellContent() {
     setActiveShellView("control_center");
   }, []);
 
+  const clearControlCenterWorkspaceHighlight = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      setControlCenterHighlightedWorkspaceIds((current) => {
+        if (!current.includes(normalizedWorkspaceId)) {
+          return current;
+        }
+        return current.filter((item) => item !== normalizedWorkspaceId);
+      });
+    },
+    [],
+  );
+
+  const handleControlCenterVisibleWorkspaceIdsChange = useCallback(
+    (workspaceIds: string[]) => {
+      const nextWorkspaceIds = workspaceIds
+        .map((workspaceId) => workspaceId.trim())
+        .filter(Boolean);
+      setControlCenterVisibleWorkspaceIds((current) =>
+        current.length === nextWorkspaceIds.length &&
+        current.every((workspaceId, index) => workspaceId === nextWorkspaceIds[index])
+          ? current
+          : nextWorkspaceIds,
+      );
+    },
+    [],
+  );
+
+  const handleMarkControlCenterWorkspaceComposerSubmission = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      controlCenterCardComposerSubmissionWorkspaceIdsRef.current.add(
+        normalizedWorkspaceId,
+      );
+      clearControlCenterWorkspaceHighlight(normalizedWorkspaceId);
+    },
+    [clearControlCenterWorkspaceHighlight],
+  );
+
+  const handleControlCenterWorkspaceCompletion = useCallback(
+    (workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (
+        !normalizedWorkspaceId ||
+        activeShellView !== "control_center" ||
+        !controlCenterVisibleWorkspaceIdSet.has(normalizedWorkspaceId)
+      ) {
+        return;
+      }
+      const suppressHighlight =
+        controlCenterCardComposerSubmissionWorkspaceIdsRef.current.delete(
+          normalizedWorkspaceId,
+        );
+      if (suppressHighlight) {
+        return;
+      }
+      setControlCenterHighlightedWorkspaceIds((current) => {
+        if (current.includes(normalizedWorkspaceId)) {
+          return current;
+        }
+        return [normalizedWorkspaceId, ...current];
+      });
+    },
+    [activeShellView, controlCenterVisibleWorkspaceIdSet],
+  );
+
   const handleSelectControlCenterWorkspace = useCallback(
     (workspaceId: string) => {
-      setSelectedWorkspaceId(workspaceId);
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      clearControlCenterWorkspaceHighlight(normalizedWorkspaceId);
+      setSelectedWorkspaceId(normalizedWorkspaceId);
     },
-    [setSelectedWorkspaceId],
+    [clearControlCenterWorkspaceHighlight, setSelectedWorkspaceId],
   );
 
   const handleEnterWorkspace = useCallback(
@@ -3387,6 +3560,7 @@ function AppShellContent() {
         return;
       }
 
+      clearControlCenterWorkspaceHighlight(normalizedWorkspaceId);
       if (normalizedWorkspaceId !== (selectedWorkspaceId?.trim() || "")) {
         setSelectedWorkspaceId(normalizedWorkspaceId);
       }
@@ -3399,7 +3573,11 @@ function AppShellContent() {
       setAgentView({ type: "chat" });
       setChatFocusRequestKey((current) => current + 1);
     },
-    [selectedWorkspaceId, setSelectedWorkspaceId],
+    [
+      clearControlCenterWorkspaceHighlight,
+      selectedWorkspaceId,
+      setSelectedWorkspaceId,
+    ],
   );
 
   const handleChatComposerDraftTextChange = useCallback(
@@ -4918,9 +5096,18 @@ function AppShellContent() {
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
             cardsPerRow={controlCenterCardsPerRow}
+            composerModel={currentComposerSelectedModel(runtimeConfig)}
+            highlightedWorkspaceIds={controlCenterHighlightedWorkspaceIds}
             onSelectWorkspace={handleSelectControlCenterWorkspace}
             onEnterWorkspace={handleEnterWorkspace}
             onOpenOutput={handleOpenControlCenterWorkspaceOutput}
+            onVisibleWorkspaceIdsChange={
+              handleControlCenterVisibleWorkspaceIdsChange
+            }
+            onCardComposerSubmit={
+              handleMarkControlCenterWorkspaceComposerSubmission
+            }
+            onWorkspaceCompletion={handleControlCenterWorkspaceCompletion}
           />
         ) : (
           <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
