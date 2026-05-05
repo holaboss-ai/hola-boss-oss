@@ -151,6 +151,52 @@ test("app shell passes the current app version into the settings dialog", async 
   );
 });
 
+test("app shell persists and passes custom control-center workspace card ordering", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY =\s*"holaboss-control-center-workspace-card-order-v1";/,
+  );
+  assert.match(
+    source,
+    /function loadControlCenterWorkspaceCardOrder\(\): string\[] \{/,
+  );
+  assert.match(
+    source,
+    /localStorage\.getItem\(\s*CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const \[\s*controlCenterWorkspaceCardOrder,\s*setControlCenterWorkspaceCardOrder,\s*\] = useState<string\[]>\(\(\) => loadControlCenterWorkspaceCardOrder\(\)\);/,
+  );
+  assert.match(
+    source,
+    /localStorage\.setItem\(\s*CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,\s*JSON\.stringify\(controlCenterWorkspaceCardOrder\),\s*\);/,
+  );
+  assert.match(
+    source,
+    /setControlCenterWorkspaceCardOrder\(\(current\) => \{\s*const next = current\.filter\(\(workspaceId, index\) => \{/,
+  );
+  assert.match(source, /return current\.indexOf\(workspaceId\) === index;/);
+  assert.match(
+    source,
+    /const handleControlCenterWorkspaceOrderChange = useCallback\(\s*\(workspaceIds: string\[]\) => \{/,
+  );
+  assert.match(
+    source,
+    /setControlCenterWorkspaceCardOrder\(\(current\) =>\s*current\.length === nextWorkspaceIds\.length &&\s*current\.every\(\(workspaceId, index\) => workspaceId === nextWorkspaceIds\[index\]\)\s*\?\s*current\s*:\s*nextWorkspaceIds,\s*\);/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*orderedWorkspaceIds=\{controlCenterWorkspaceCardOrder\}/,
+  );
+  assert.match(
+    source,
+    /<WorkspaceControlCenter[\s\S]*onWorkspaceOrderChange=\{handleControlCenterWorkspaceOrderChange\}/,
+  );
+});
+
 test("app shell suppresses visible control-center completion toasts in favor of card highlights", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -516,7 +562,7 @@ test("app shell renders a persistent icon rail beside a drag-resizable explorer 
     source,
     /hostWidth -\s*explorerWidth -\s*SPACE_DISPLAY_MIN_WIDTH -\s*UTILITY_PANE_RESIZER_WIDTH/,
   );
-  assert.match(source, /new ResizeObserver\(\(\) => \{\s*syncDisplayWidth\(\);\s*\}\)/);
+  assert.match(source, /new ResizeObserver\(schedule\)/);
 });
 
 test("app shell wires filesPaneWidth into the explorer panel and uses a drag handle mirrored from the agent pane resizer", async () => {

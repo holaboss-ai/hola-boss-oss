@@ -81,6 +81,8 @@ const SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY =
   "holaboss-space-workspace-panel-collapsed-v1";
 const CONTROL_CENTER_CARDS_PER_ROW_STORAGE_KEY =
   "holaboss-control-center-cards-per-row-v1";
+const CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY =
+  "holaboss-control-center-workspace-card-order-v1";
 const THEMES = [
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -867,6 +869,26 @@ function loadControlCenterCardsPerRow(): ControlCenterCardsPerRow {
   return 3;
 }
 
+function loadControlCenterWorkspaceCardOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(
+      CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,
+    );
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function loadOperationsDrawerOpen(): boolean {
   try {
     const raw = localStorage.getItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY);
@@ -1532,6 +1554,10 @@ function AppShellContent() {
     useState<RuntimeNotificationRecordPayload[]>([]);
   const [devNotificationToastPreview, setDevNotificationToastPreview] =
     useState<RuntimeNotificationRecordPayload[]>([]);
+  const [
+    controlCenterWorkspaceCardOrder,
+    setControlCenterWorkspaceCardOrder,
+  ] = useState<string[]>(() => loadControlCenterWorkspaceCardOrder());
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const reportedOperatorSurfaceWorkspaceIdRef = useRef<string | null>(null);
@@ -1655,6 +1681,15 @@ function AppShellContent() {
       const next = current.filter((workspaceId) =>
         activeWorkspaceIds.has(workspaceId),
       );
+      return next.length === current.length ? current : next;
+    });
+    setControlCenterWorkspaceCardOrder((current) => {
+      const next = current.filter((workspaceId, index) => {
+        if (!activeWorkspaceIds.has(workspaceId)) {
+          return false;
+        }
+        return current.indexOf(workspaceId) === index;
+      });
       return next.length === current.length ? current : next;
     });
     for (const workspaceId of [
@@ -2715,6 +2750,13 @@ function AppShellContent() {
 
   useEffect(() => {
     localStorage.setItem(
+      CONTROL_CENTER_WORKSPACE_CARD_ORDER_STORAGE_KEY,
+      JSON.stringify(controlCenterWorkspaceCardOrder),
+    );
+  }, [controlCenterWorkspaceCardOrder]);
+
+  useEffect(() => {
+    localStorage.setItem(
       SPACE_WORKSPACE_PANEL_COLLAPSED_STORAGE_KEY,
       spaceWorkspacePanelCollapsed ? "1" : "0",
     );
@@ -3539,6 +3581,21 @@ function AppShellContent() {
       });
     },
     [activeShellView, controlCenterVisibleWorkspaceIdSet],
+  );
+
+  const handleControlCenterWorkspaceOrderChange = useCallback(
+    (workspaceIds: string[]) => {
+      const nextWorkspaceIds = workspaceIds
+        .map((workspaceId) => workspaceId.trim())
+        .filter(Boolean);
+      setControlCenterWorkspaceCardOrder((current) =>
+        current.length === nextWorkspaceIds.length &&
+        current.every((workspaceId, index) => workspaceId === nextWorkspaceIds[index])
+          ? current
+          : nextWorkspaceIds,
+      );
+    },
+    [],
   );
 
   const handleSelectControlCenterWorkspace = useCallback(
@@ -5097,10 +5154,12 @@ function AppShellContent() {
             selectedWorkspaceId={selectedWorkspaceId}
             cardsPerRow={controlCenterCardsPerRow}
             composerModel={currentComposerSelectedModel(runtimeConfig)}
+            orderedWorkspaceIds={controlCenterWorkspaceCardOrder}
             highlightedWorkspaceIds={controlCenterHighlightedWorkspaceIds}
             onSelectWorkspace={handleSelectControlCenterWorkspace}
             onEnterWorkspace={handleEnterWorkspace}
             onOpenOutput={handleOpenControlCenterWorkspaceOutput}
+            onWorkspaceOrderChange={handleControlCenterWorkspaceOrderChange}
             onVisibleWorkspaceIdsChange={
               handleControlCenterVisibleWorkspaceIdsChange
             }

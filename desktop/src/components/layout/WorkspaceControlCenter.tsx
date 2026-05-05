@@ -2,6 +2,7 @@ import {
   ArrowUpRight,
   ChevronLeft,
   ChevronRight,
+  GripVertical,
   Loader2,
   SendHorizontal,
   TriangleAlert,
@@ -13,6 +14,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -69,6 +71,7 @@ interface WorkspaceControlCenterProps {
   selectedWorkspaceId: string | null;
   cardsPerRow: number;
   composerModel: string | null;
+  orderedWorkspaceIds: readonly string[];
   highlightedWorkspaceIds: readonly string[];
   onSelectWorkspace: (workspaceId: string) => void;
   onEnterWorkspace: (workspaceId: string) => void;
@@ -76,6 +79,7 @@ interface WorkspaceControlCenterProps {
     workspaceId: string,
     output: WorkspaceOutputRecordPayload,
   ) => void;
+  onWorkspaceOrderChange: (workspaceIds: string[]) => void;
   onVisibleWorkspaceIdsChange: (workspaceIds: string[]) => void;
   onCardComposerSubmit: (workspaceId: string) => void;
   onWorkspaceCompletion: (workspaceId: string) => void;
@@ -85,6 +89,8 @@ interface WorkspaceCardProps {
   workspace: WorkspaceRecordPayload;
   isSelected: boolean;
   composerModel: string | null;
+  isDragging: boolean;
+  isDragTarget: boolean;
   hasUnreadCompletionHighlight: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onEnterWorkspace: (workspaceId: string) => void;
@@ -92,6 +98,14 @@ interface WorkspaceCardProps {
     workspaceId: string,
     output: WorkspaceOutputRecordPayload,
   ) => void;
+  onDragStartWorkspace: (
+    event: ReactDragEvent<HTMLButtonElement>,
+    workspaceId: string,
+  ) => void;
+  onDragEnterWorkspace: (workspaceId: string) => void;
+  onDragOverWorkspace: (event: ReactDragEvent<HTMLElement>) => void;
+  onDropWorkspace: (event: ReactDragEvent<HTMLElement>, workspaceId: string) => void;
+  onDragEndWorkspace: () => void;
   onCardComposerSubmit: (workspaceId: string) => void;
   onWorkspaceCompletion: (workspaceId: string) => void;
 }
@@ -149,6 +163,41 @@ function lastActivityFromSnapshot(params: {
       .reverse()
       .find((message) => Boolean(message.createdAt))?.createdAt ?? null;
   return lastMessageAt || params.fallbackActivityAt;
+}
+
+function mergeWorkspaceOrder(
+  sortedWorkspaces: WorkspaceRecordPayload[],
+  orderedWorkspaceIds: readonly string[],
+) {
+  const workspaceById = new Map(
+    sortedWorkspaces.map((workspace) => [workspace.id.trim(), workspace]),
+  );
+  const merged: WorkspaceRecordPayload[] = [];
+  const seenWorkspaceIds = new Set<string>();
+
+  for (const workspaceId of orderedWorkspaceIds) {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!normalizedWorkspaceId || seenWorkspaceIds.has(normalizedWorkspaceId)) {
+      continue;
+    }
+    const workspace = workspaceById.get(normalizedWorkspaceId);
+    if (!workspace) {
+      continue;
+    }
+    seenWorkspaceIds.add(normalizedWorkspaceId);
+    merged.push(workspace);
+  }
+
+  for (const workspace of sortedWorkspaces) {
+    const normalizedWorkspaceId = workspace.id.trim();
+    if (!normalizedWorkspaceId || seenWorkspaceIds.has(normalizedWorkspaceId)) {
+      continue;
+    }
+    seenWorkspaceIds.add(normalizedWorkspaceId);
+    merged.push(workspace);
+  }
+
+  return merged;
 }
 
 function previewStatusFromRuntimeState(
@@ -251,10 +300,17 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   workspace,
   isSelected,
   composerModel,
+  isDragging,
+  isDragTarget,
   hasUnreadCompletionHighlight,
   onSelectWorkspace,
   onEnterWorkspace,
   onOpenOutput,
+  onDragStartWorkspace,
+  onDragEnterWorkspace,
+  onDragOverWorkspace,
+  onDropWorkspace,
+  onDragEndWorkspace,
   onCardComposerSubmit,
   onWorkspaceCompletion,
 }: WorkspaceCardProps) {
@@ -1085,8 +1141,15 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
     <Card
       onPointerDownCapture={() => onSelectWorkspace(workspaceId)}
       onFocusCapture={() => onSelectWorkspace(workspaceId)}
+      onDragEnter={() => onDragEnterWorkspace(workspaceId)}
+      onDragOver={onDragOverWorkspace}
+      onDrop={(event) => onDropWorkspace(event, workspaceId)}
       className={cn(
         "relative h-full min-h-0 min-w-0 border border-border/70 bg-card py-0 shadow-md",
+        isDragging ? "cursor-grabbing opacity-70" : "",
+        isDragTarget
+          ? "border-primary/70 ring-2 ring-primary/28 ring-inset"
+          : "",
         hasUnreadCompletionHighlight
           ? "border-primary/65 shadow-[0_16px_48px_-24px_color-mix(in_oklch,var(--primary)_44%,transparent)]"
           : isSelected
@@ -1097,6 +1160,18 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
       <CardHeader className="border-b border-border/70 px-2.5 py-1.5">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex min-w-0 flex-1 items-center gap-2 text-[0.95rem]">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              draggable
+              aria-label={`Reorder ${workspace.name}`}
+              onDragStart={(event) => onDragStartWorkspace(event, workspaceId)}
+              onDragEnd={onDragEndWorkspace}
+              className="h-6 w-6 shrink-0 cursor-grab rounded-md text-muted-foreground hover:text-foreground active:cursor-grabbing"
+            >
+              <GripVertical className="size-3.5" />
+            </Button>
             <span
               className={cn(
                 "inline-flex h-2.5 w-2.5 shrink-0 rounded-full",
@@ -1250,10 +1325,12 @@ export function WorkspaceControlCenter({
   selectedWorkspaceId,
   cardsPerRow,
   composerModel,
+  orderedWorkspaceIds,
   highlightedWorkspaceIds,
   onSelectWorkspace,
   onEnterWorkspace,
   onOpenOutput,
+  onWorkspaceOrderChange,
   onVisibleWorkspaceIdsChange,
   onCardComposerSubmit,
   onWorkspaceCompletion,
@@ -1267,6 +1344,8 @@ export function WorkspaceControlCenter({
   const [pageCount, setPageCount] = useState(1);
   const [currentPage, setCurrentPage] = useState(0);
   const [allowVerticalOverflow, setAllowVerticalOverflow] = useState(false);
+  const [draggedWorkspaceId, setDraggedWorkspaceId] = useState("");
+  const [dragTargetWorkspaceId, setDragTargetWorkspaceId] = useState("");
   const wheelSwipeAccumulationRef = useRef(0);
   const wheelSwipeResetTimerRef = useRef<number | null>(null);
 
@@ -1282,17 +1361,21 @@ export function WorkspaceControlCenter({
       return left.name.localeCompare(right.name);
     });
   }, [workspaces]);
+  const orderedWorkspaces = useMemo(
+    () => mergeWorkspaceOrder(sortedWorkspaces, orderedWorkspaceIds),
+    [orderedWorkspaceIds, sortedWorkspaces],
+  );
 
   const cardsPerPage = Math.max(1, gridColumnCount * visibleRowCount);
   const pageContentHeight =
     visibleRowCount * cardHeight + 16 * (visibleRowCount - 1);
   const pagedWorkspaces = useMemo(() => {
     const pages: WorkspaceRecordPayload[][] = [];
-    for (let index = 0; index < sortedWorkspaces.length; index += cardsPerPage) {
-      pages.push(sortedWorkspaces.slice(index, index + cardsPerPage));
+    for (let index = 0; index < orderedWorkspaces.length; index += cardsPerPage) {
+      pages.push(orderedWorkspaces.slice(index, index + cardsPerPage));
     }
     return pages;
-  }, [cardsPerPage, sortedWorkspaces]);
+  }, [cardsPerPage, orderedWorkspaces]);
   const currentPageWorkspaces = pagedWorkspaces[currentPage] ?? [];
   const highlightedWorkspaceIdSet = useMemo(
     () =>
@@ -1496,6 +1579,78 @@ export function WorkspaceControlCenter({
     [currentPage, navigatePage, pageCount],
   );
 
+  const handleDragStartWorkspace = useCallback(
+    (event: ReactDragEvent<HTMLButtonElement>, workspaceId: string) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", normalizedWorkspaceId);
+      setDraggedWorkspaceId(normalizedWorkspaceId);
+      setDragTargetWorkspaceId("");
+    },
+    [],
+  );
+
+  const handleDragEnterWorkspace = useCallback((workspaceId: string) => {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (!draggedWorkspaceId || !normalizedWorkspaceId) {
+      return;
+    }
+    setDragTargetWorkspaceId(normalizedWorkspaceId);
+  }, [draggedWorkspaceId]);
+
+  const handleDragOverWorkspace = useCallback(
+    (event: ReactDragEvent<HTMLElement>) => {
+      if (!draggedWorkspaceId) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    [draggedWorkspaceId],
+  );
+
+  const handleDragEndWorkspace = useCallback(() => {
+    setDraggedWorkspaceId("");
+    setDragTargetWorkspaceId("");
+  }, []);
+
+  const handleDropWorkspace = useCallback(
+    (event: ReactDragEvent<HTMLElement>, targetWorkspaceId: string) => {
+      if (!draggedWorkspaceId) {
+        return;
+      }
+      event.preventDefault();
+      const normalizedTargetWorkspaceId = targetWorkspaceId.trim();
+      if (
+        !normalizedTargetWorkspaceId ||
+        normalizedTargetWorkspaceId === draggedWorkspaceId
+      ) {
+        setDraggedWorkspaceId("");
+        setDragTargetWorkspaceId("");
+        return;
+      }
+      const nextOrderedWorkspaceIds = orderedWorkspaces.map((workspace) =>
+        workspace.id.trim(),
+      );
+      const fromIndex = nextOrderedWorkspaceIds.indexOf(draggedWorkspaceId);
+      const targetIndex = nextOrderedWorkspaceIds.indexOf(normalizedTargetWorkspaceId);
+      if (fromIndex < 0 || targetIndex < 0) {
+        setDraggedWorkspaceId("");
+        setDragTargetWorkspaceId("");
+        return;
+      }
+      const [draggedId] = nextOrderedWorkspaceIds.splice(fromIndex, 1);
+      nextOrderedWorkspaceIds.splice(targetIndex, 0, draggedId);
+      onWorkspaceOrderChange(nextOrderedWorkspaceIds);
+      setDraggedWorkspaceId("");
+      setDragTargetWorkspaceId("");
+    },
+    [draggedWorkspaceId, onWorkspaceOrderChange, orderedWorkspaces],
+  );
+
   return (
     <section className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
       <div
@@ -1549,12 +1704,23 @@ export function WorkspaceControlCenter({
                   workspace={workspace}
                   isSelected={workspace.id === (selectedWorkspaceId || "").trim()}
                   composerModel={composerModel}
+                  isDragging={draggedWorkspaceId === workspace.id.trim()}
+                  isDragTarget={
+                    Boolean(draggedWorkspaceId) &&
+                    dragTargetWorkspaceId === workspace.id.trim() &&
+                    draggedWorkspaceId !== workspace.id.trim()
+                  }
                   hasUnreadCompletionHighlight={highlightedWorkspaceIdSet.has(
                     workspace.id.trim(),
                   )}
                   onSelectWorkspace={onSelectWorkspace}
                   onEnterWorkspace={onEnterWorkspace}
                   onOpenOutput={onOpenOutput}
+                  onDragStartWorkspace={handleDragStartWorkspace}
+                  onDragEnterWorkspace={handleDragEnterWorkspace}
+                  onDragOverWorkspace={handleDragOverWorkspace}
+                  onDropWorkspace={handleDropWorkspace}
+                  onDragEndWorkspace={handleDragEndWorkspace}
                   onCardComposerSubmit={onCardComposerSubmit}
                   onWorkspaceCompletion={onWorkspaceCompletion}
                 />

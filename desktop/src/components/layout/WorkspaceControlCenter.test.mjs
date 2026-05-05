@@ -27,7 +27,9 @@ test("workspace control center renders preview cards through the main chat turn 
   assert.match(source, /onOpenAllArtifacts=\{handleOpenArtifacts\}/);
   assert.match(source, /<ArtifactBrowserModal[\s\S]*layout="card"/);
   assert.match(source, /composerModel: string \| null;/);
+  assert.match(source, /orderedWorkspaceIds: readonly string\[];/);
   assert.match(source, /highlightedWorkspaceIds: readonly string\[];/);
+  assert.match(source, /onWorkspaceOrderChange: \(workspaceIds: string\[]\) => void;/);
   assert.match(source, /onVisibleWorkspaceIdsChange: \(workspaceIds: string\[]\) => void;/);
   assert.match(source, /onCardComposerSubmit: \(workspaceId: string\) => void;/);
   assert.match(source, /onWorkspaceCompletion: \(workspaceId: string\) => void;/);
@@ -36,12 +38,45 @@ test("workspace control center renders preview cards through the main chat turn 
 test("workspace control center queues card composer input with the resolved shell composer model", async () => {
   const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
 
-  assert.match(source, /composerModel,\s*hasUnreadCompletionHighlight,/);
+  assert.match(source, /composerModel: string \| null;/);
   assert.match(
     source,
     /window\.electronAPI\.workspace\.queueSessionInput\(\{[\s\S]*priority: 0,[\s\S]*model: composerModel,/,
   );
   assert.match(source, /<WorkspaceControlCenterCard[\s\S]*composerModel=\{composerModel\}/);
+});
+
+test("workspace control center supports persisted drag reordering of cards", async () => {
+  const source = await readFile(WORKSPACE_CONTROL_CENTER_PATH, "utf8");
+
+  assert.match(source, /GripVertical/);
+  assert.match(source, /type DragEvent as ReactDragEvent/);
+  assert.match(
+    source,
+    /function mergeWorkspaceOrder\(\s*sortedWorkspaces: WorkspaceRecordPayload\[],\s*orderedWorkspaceIds: readonly string\[],\s*\)/,
+  );
+  assert.match(source, /const orderedWorkspaces = useMemo\(/);
+  assert.match(
+    source,
+    /mergeWorkspaceOrder\(sortedWorkspaces, orderedWorkspaceIds\)/,
+  );
+  assert.match(source, /const \[draggedWorkspaceId, setDraggedWorkspaceId\] = useState\(""\);/);
+  assert.match(source, /const \[dragTargetWorkspaceId, setDragTargetWorkspaceId\] = useState\(""\);/);
+  assert.match(
+    source,
+    /const handleDragStartWorkspace = useCallback\(\s*\(event: ReactDragEvent<HTMLButtonElement>, workspaceId: string\) => \{/,
+  );
+  assert.match(source, /event\.dataTransfer\.effectAllowed = "move";/);
+  assert.match(source, /const handleDropWorkspace = useCallback\(/);
+  assert.match(source, /onWorkspaceOrderChange\(nextOrderedWorkspaceIds\);/);
+  assert.match(source, /draggable/);
+  assert.match(source, /aria-label=\{`Reorder \$\{workspace\.name\}`\}/);
+  assert.match(source, /onDragStart=\{\(event\) => onDragStartWorkspace\(event, workspaceId\)\}/);
+  assert.match(source, /onDragEnter=\{\(\) => onDragEnterWorkspace\(workspaceId\)\}/);
+  assert.match(source, /onDrop=\{\(event\) => onDropWorkspace\(event, workspaceId\)\}/);
+  assert.match(source, /onDragEnd=\{onDragEndWorkspace\}/);
+  assert.match(source, /<WorkspaceControlCenterCard[\s\S]*isDragging=\{draggedWorkspaceId === workspace\.id\.trim\(\)\}/);
+  assert.match(source, /<WorkspaceControlCenterCard[\s\S]*onDropWorkspace=\{handleDropWorkspace\}/);
 });
 
 test("workspace control center reports the visible page and highlights unseen completed cards", async () => {
