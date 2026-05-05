@@ -3,6 +3,7 @@ import {
   type ClipboardEvent,
   type CompositionEvent,
   type DragEvent,
+  Fragment,
   FormEvent,
   KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -103,7 +104,7 @@ import * as modelCatalog from "../../../shared/model-catalog.js";
 type ChatAttachment = SessionInputAttachmentPayload;
 type ChatPaneVariant = "default" | "onboarding";
 
-type ChatAssistantSegment =
+export type ChatAssistantSegment =
   | {
       kind: "execution";
       items: ChatExecutionTimelineItem[];
@@ -114,7 +115,7 @@ type ChatAssistantSegment =
       tone?: "default" | "error";
     };
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
@@ -347,7 +348,7 @@ interface StreamTelemetryEntry {
   detail: string;
 }
 
-type ArtifactBrowserFilter =
+export type ArtifactBrowserFilter =
   | "all"
   | "documents"
   | "images"
@@ -829,7 +830,7 @@ function normalizeChatAttachment(value: unknown): ChatAttachment | null {
   };
 }
 
-function attachmentsFromMetadata(
+export function attachmentsFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): ChatAttachment[] {
   const raw = metadata?.attachments;
@@ -977,6 +978,178 @@ function assistantSegmentsIncludeOutput(segments: ChatAssistantSegment[]) {
   );
 }
 
+export function chatMessagesFromSessionState(params: {
+  historyMessages: SessionHistoryMessagePayload[];
+  outputEvents: SessionOutputEventPayload[];
+  outputs: WorkspaceOutputRecordPayload[];
+  memoryProposals: MemoryUpdateProposalRecordPayload[];
+  knownAssistantInputIds?: Set<string>;
+  showExecutionInternals: boolean;
+}): ChatMessage[] {
+  const outputEventsByInputId = new Map<
+    string,
+    SessionOutputEventPayload[]
+  >();
+  const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
+  const memoryProposalsByInputId = new Map<
+    string,
+    MemoryUpdateProposalRecordPayload[]
+  >();
+  for (const event of params.outputEvents) {
+    const inputId = event.input_id.trim();
+    if (!inputId) {
+      continue;
+    }
+    const existing = outputEventsByInputId.get(inputId);
+    if (existing) {
+      existing.push(event);
+    } else {
+      outputEventsByInputId.set(inputId, [event]);
+    }
+  }
+  for (const output of params.outputs) {
+    const inputId = (output.input_id || "").trim();
+    if (!inputId) {
+      continue;
+    }
+    const existing = outputsByInputId.get(inputId);
+    if (existing) {
+      existing.push(output);
+    } else {
+      outputsByInputId.set(inputId, [output]);
+    }
+  }
+  for (const proposal of params.memoryProposals) {
+    const inputId = proposal.input_id.trim();
+    if (!inputId) {
+      continue;
+    }
+    const existing = memoryProposalsByInputId.get(inputId);
+    if (existing) {
+      existing.push(proposal);
+    } else {
+      memoryProposalsByInputId.set(inputId, [proposal]);
+    }
+  }
+
+  const assistantHistoryInputIds = new Set(params.knownAssistantInputIds ?? []);
+  for (const message of params.historyMessages) {
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const inputId = inputIdFromMessageId(message.id, "assistant");
+    if (inputId) {
+      assistantHistoryInputIds.add(inputId);
+    }
+  }
+
+  return params.historyMessages
+    .flatMap((message) => {
+      const attachments = attachmentsFromMetadata(message.metadata);
+      const nextMessage: ChatMessage = {
+        id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
+        role: message.role as ChatMessage["role"],
+        text: message.text,
+        createdAt: message.created_at || undefined,
+        attachments,
+      };
+      const renderedMessages: ChatMessage[] = [nextMessage];
+
+      if (nextMessage.role === "assistant") {
+        const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
+        if (inputId) {
+          const restoredAssistantState = assistantHistoryStateFromOutputEvents(
+            outputEventsByInputId.get(inputId) ?? [],
+          );
+          const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
+          const turnMemoryProposals = sortMemoryUpdateProposals(
+            memoryProposalsByInputId.get(inputId) ?? [],
+          );
+          if (restoredAssistantState.segments) {
+            nextMessage.segments = restoredAssistantState.segments;
+            nextMessage.text = "";
+            nextMessage.executionItems = undefined;
+          } else if (restoredAssistantState.executionItems) {
+            nextMessage.executionItems = restoredAssistantState.executionItems;
+          }
+          if (
+            !nextMessage.text &&
+            !nextMessage.segments &&
+            restoredAssistantState.failureText
+          ) {
+            nextMessage.text = restoredAssistantState.failureText;
+            nextMessage.tone = "error";
+          }
+          if (turnMemoryProposals.length > 0) {
+            nextMessage.memoryProposals = turnMemoryProposals;
+          }
+          if (turnOutputs.length > 0) {
+            nextMessage.outputs = turnOutputs;
+          }
+        }
+      }
+
+      const userInputId =
+        nextMessage.role === "user"
+          ? inputIdFromMessageId(nextMessage.id, "user")
+          : "";
+      if (
+        nextMessage.role === "user" &&
+        userInputId &&
+        !assistantHistoryInputIds.has(userInputId)
+      ) {
+        const restoredAssistantState = assistantHistoryStateFromOutputEvents(
+          outputEventsByInputId.get(userInputId) ?? [],
+        );
+        const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
+        const turnMemoryProposals = sortMemoryUpdateProposals(
+          memoryProposalsByInputId.get(userInputId) ?? [],
+        );
+        const syntheticAssistantMessage: ChatMessage = {
+          id: `assistant-${userInputId}`,
+          role: "assistant",
+          text:
+            restoredAssistantState.segments ||
+            !restoredAssistantState.failureText
+              ? ""
+              : restoredAssistantState.failureText,
+          tone:
+            restoredAssistantState.segments ||
+            !restoredAssistantState.failureText
+              ? "default"
+              : "error",
+          createdAt:
+            restoredAssistantState.terminalCreatedAt || nextMessage.createdAt,
+          segments: restoredAssistantState.segments,
+          executionItems: restoredAssistantState.segments
+            ? undefined
+            : restoredAssistantState.executionItems,
+          outputs: turnOutputs.length > 0 ? turnOutputs : undefined,
+          memoryProposals:
+            turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
+        };
+        if (
+          hasRenderableAssistantTurn(syntheticAssistantMessage, {
+            showExecutionInternals: params.showExecutionInternals,
+          })
+        ) {
+          renderedMessages.push(syntheticAssistantMessage);
+        }
+      }
+
+      return renderedMessages;
+    })
+    .filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant") &&
+        (message.role === "assistant"
+          ? hasRenderableAssistantTurn(message, {
+              showExecutionInternals: params.showExecutionInternals,
+            })
+          : hasRenderableMessageContent(message.text, message.attachments ?? [])),
+    );
+}
+
 function formatAttachmentSize(sizeBytes: number) {
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     return "";
@@ -1109,7 +1282,7 @@ function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
   return parts.join(" · ");
 }
 
-function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
+export function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
   return [...dedupeOutputsForDisplay(outputs)].sort((left, right) => {
     const leftTime = Date.parse(left.created_at || "") || 0;
     const rightTime = Date.parse(right.created_at || "") || 0;
@@ -1649,26 +1822,31 @@ function toolTraceStepId(payload: Record<string, unknown>) {
     : "";
 }
 
-function inputIdFromMessageId(messageId: string, role: "user" | "assistant") {
+export function inputIdFromMessageId(
+  messageId: string,
+  role: "user" | "assistant",
+) {
   const prefix = `${role}-`;
   return messageId.startsWith(prefix) ? messageId.slice(prefix.length) : "";
 }
 
-function inputIdFromHistoryMessage(message: SessionHistoryMessagePayload) {
+export function inputIdFromHistoryMessage(
+  message: SessionHistoryMessagePayload,
+) {
   if (message.role === "user" || message.role === "assistant") {
     return inputIdFromMessageId(message.id, message.role);
   }
   return "";
 }
 
-function historyMessagesInDisplayOrder(
+export function historyMessagesInDisplayOrder(
   messages: SessionHistoryMessagePayload[],
   order: "asc" | "desc",
 ) {
   return order === "desc" ? [...messages].reverse() : messages;
 }
 
-function turnInputIdsFromHistoryMessages(
+export function turnInputIdsFromHistoryMessages(
   messages: SessionHistoryMessagePayload[],
 ) {
   const seen = new Set<string>();
@@ -3048,6 +3226,13 @@ interface ChatPaneBrowserJumpRequest {
   requestKey: number;
 }
 
+interface ChatPaneArtifactBrowserRequest {
+  workspaceId: string;
+  outputs: WorkspaceOutputRecordPayload[];
+  requestKey: number;
+  scope?: "reply" | "session";
+}
+
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onSyncFileDisplayFromAgentOperation?: (path: string) => void;
@@ -3064,6 +3249,8 @@ interface ChatPaneProps {
   onComposerPrefillConsumed?: (requestKey: number) => void;
   explorerAttachmentRequest?: ChatPaneExplorerAttachmentRequest | null;
   onExplorerAttachmentRequestConsumed?: (requestKey: number) => void;
+  artifactBrowserRequest?: ChatPaneArtifactBrowserRequest | null;
+  onArtifactBrowserRequestConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
   browserJumpRequest?: ChatPaneBrowserJumpRequest | null;
   onBrowserJumpRequestConsumed?: (
@@ -3095,6 +3282,8 @@ export function ChatPane({
   onComposerPrefillConsumed,
   explorerAttachmentRequest = null,
   onExplorerAttachmentRequestConsumed,
+  artifactBrowserRequest = null,
+  onArtifactBrowserRequestConsumed,
   onActiveSessionIdChange,
   browserJumpRequest = null,
   onBrowserJumpRequestConsumed,
@@ -3266,6 +3455,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const lastHandledLocalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const lastHandledExplorerAttachmentRequestKeyRef = useRef(0);
+  const lastHandledArtifactBrowserRequestKeyRef = useRef(0);
   const consumedSessionOpenRequestKeysRef = useRef<Set<number>>(new Set());
   const localSessionOpenRequestRef = useRef<ChatPaneSessionOpenRequest | null>(
     null,
@@ -3618,181 +3808,15 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     memoryProposals: MemoryUpdateProposalRecordPayload[],
     knownAssistantInputIds: Set<string> = new Set(),
   ): ChatMessage[] {
-    const outputEventsByInputId = new Map<
-      string,
-      SessionOutputEventPayload[]
-    >();
-    const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
-    const memoryProposalsByInputId = new Map<
-      string,
-      MemoryUpdateProposalRecordPayload[]
-    >();
-    for (const event of outputEvents) {
-      const inputId = event.input_id.trim();
-      if (!inputId) {
-        continue;
-      }
-      const existing = outputEventsByInputId.get(inputId);
-      if (existing) {
-        existing.push(event);
-      } else {
-        outputEventsByInputId.set(inputId, [event]);
-      }
-    }
-    for (const output of outputs) {
-      const inputId = (output.input_id || "").trim();
-      if (!inputId) {
-        continue;
-      }
-      const existing = outputsByInputId.get(inputId);
-      if (existing) {
-        existing.push(output);
-      } else {
-        outputsByInputId.set(inputId, [output]);
-      }
-    }
-    for (const proposal of memoryProposals) {
-      const inputId = proposal.input_id.trim();
-      if (!inputId) {
-        continue;
-      }
-      const existing = memoryProposalsByInputId.get(inputId);
-      if (existing) {
-        existing.push(proposal);
-      } else {
-        memoryProposalsByInputId.set(inputId, [proposal]);
-      }
-    }
-
-    const assistantHistoryInputIds = new Set(knownAssistantInputIds);
-    for (const message of historyMessages) {
-      if (message.role !== "assistant") {
-        continue;
-      }
-      const inputId = inputIdFromMessageId(message.id, "assistant");
-      if (inputId) {
-        assistantHistoryInputIds.add(inputId);
-      }
-    }
-
-    return historyMessages
-      .flatMap((message) => {
-        const attachments = attachmentsFromMetadata(message.metadata);
-        const nextMessage: ChatMessage = {
-          id:
-            message.id ||
-            `history-${message.created_at ?? crypto.randomUUID()}`,
-          role: message.role as ChatMessage["role"],
-          text: message.text,
-          createdAt: message.created_at || undefined,
-          attachments,
-        };
-        const renderedMessages: ChatMessage[] = [nextMessage];
-
-        if (nextMessage.role === "assistant") {
-          const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
-          if (inputId) {
-            const restoredAssistantState =
-              assistantHistoryStateFromOutputEvents(
-                outputEventsByInputId.get(inputId) ?? [],
-              );
-            const turnOutputs = sortOutputs(
-              outputsByInputId.get(inputId) ?? [],
-            );
-            const turnMemoryProposals = sortMemoryUpdateProposals(
-              memoryProposalsByInputId.get(inputId) ?? [],
-            );
-            if (restoredAssistantState.segments) {
-              nextMessage.segments = restoredAssistantState.segments;
-              nextMessage.text = "";
-              nextMessage.executionItems = undefined;
-            } else if (restoredAssistantState.executionItems) {
-              nextMessage.executionItems =
-                restoredAssistantState.executionItems;
-            }
-            if (
-              !nextMessage.text &&
-              !nextMessage.segments &&
-              restoredAssistantState.failureText
-            ) {
-              nextMessage.text = restoredAssistantState.failureText;
-              nextMessage.tone = "error";
-            }
-            if (turnMemoryProposals.length > 0) {
-              nextMessage.memoryProposals = turnMemoryProposals;
-            }
-            if (turnOutputs.length > 0) {
-              nextMessage.outputs = turnOutputs;
-            }
-          }
-        }
-
-        const userInputId =
-          nextMessage.role === "user"
-            ? inputIdFromMessageId(nextMessage.id, "user")
-            : "";
-        if (
-          nextMessage.role === "user" &&
-          userInputId &&
-          !assistantHistoryInputIds.has(userInputId)
-        ) {
-          const restoredAssistantState = assistantHistoryStateFromOutputEvents(
-            outputEventsByInputId.get(userInputId) ?? [],
-          );
-          const turnOutputs = sortOutputs(
-            outputsByInputId.get(userInputId) ?? [],
-          );
-          const turnMemoryProposals = sortMemoryUpdateProposals(
-            memoryProposalsByInputId.get(userInputId) ?? [],
-          );
-          const syntheticAssistantMessage: ChatMessage = {
-            id: `assistant-${userInputId}`,
-            role: "assistant",
-            text:
-              restoredAssistantState.segments ||
-              !restoredAssistantState.failureText
-                ? ""
-                : restoredAssistantState.failureText,
-            tone:
-              restoredAssistantState.segments ||
-              !restoredAssistantState.failureText
-                ? "default"
-                : "error",
-            createdAt:
-              restoredAssistantState.terminalCreatedAt || nextMessage.createdAt,
-            segments: restoredAssistantState.segments,
-            executionItems: restoredAssistantState.segments
-              ? undefined
-              : restoredAssistantState.executionItems,
-            outputs: turnOutputs.length > 0 ? turnOutputs : undefined,
-            memoryProposals:
-              turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
-          };
-          if (
-            hasRenderableAssistantTurn(syntheticAssistantMessage, {
-              showExecutionInternals:
-                shouldShowExecutionInternalsForSession(sessionId),
-            })
-          ) {
-            renderedMessages.push(syntheticAssistantMessage);
-          }
-        }
-
-        return renderedMessages;
-      })
-      .filter(
-        (message) =>
-          (message.role === "user" || message.role === "assistant") &&
-          (message.role === "assistant"
-            ? hasRenderableAssistantTurn(message, {
-                showExecutionInternals:
-                  shouldShowExecutionInternalsForSession(sessionId),
-              })
-            : hasRenderableMessageContent(
-                message.text,
-                message.attachments ?? [],
-              )),
-      );
+    return chatMessagesFromSessionState({
+      historyMessages,
+      outputEvents,
+      outputs,
+      memoryProposals,
+      knownAssistantInputIds,
+      showExecutionInternals:
+        shouldShowExecutionInternalsForSession(sessionId),
+    });
   }
 
   async function loadSessionHistoryPage(
@@ -6630,6 +6654,49 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   ]);
 
   useEffect(() => {
+    const requestKey = artifactBrowserRequest?.requestKey ?? 0;
+    const requestWorkspaceId =
+      artifactBrowserRequest?.workspaceId?.trim() ?? "";
+    const normalizedWorkspaceId = (selectedWorkspaceId || "").trim();
+    const mainSessionWorkspaceId =
+      (desktopMainSession?.workspace_id || "").trim();
+    const mainSessionId = (desktopMainSession?.session_id || "").trim();
+    const normalizedActiveSessionId = (activeSessionId || "").trim();
+    const requestWorkspaceReady =
+      Boolean(requestWorkspaceId) &&
+      requestWorkspaceId === normalizedWorkspaceId &&
+      requestWorkspaceId === mainSessionWorkspaceId &&
+      Boolean(mainSessionId) &&
+      normalizedActiveSessionId === mainSessionId &&
+      !isLoadingHistory;
+    if (
+      requestKey <= 0 ||
+      requestKey === lastHandledArtifactBrowserRequestKeyRef.current ||
+      !requestWorkspaceReady
+    ) {
+      return;
+    }
+
+    lastHandledArtifactBrowserRequestKeyRef.current = requestKey;
+    setArtifactBrowserFilter("all");
+    setArtifactBrowserScopedOutputs(artifactBrowserRequest?.outputs ?? []);
+    setArtifactBrowserScope(artifactBrowserRequest?.scope ?? "reply");
+    setArtifactBrowserOpen(true);
+    onArtifactBrowserRequestConsumed?.(requestKey);
+  }, [
+    activeSessionId,
+    artifactBrowserRequest?.outputs,
+    artifactBrowserRequest?.requestKey,
+    artifactBrowserRequest?.scope,
+    artifactBrowserRequest?.workspaceId,
+    desktopMainSession?.session_id,
+    desktopMainSession?.workspace_id,
+    isLoadingHistory,
+    onArtifactBrowserRequestConsumed,
+    selectedWorkspaceId,
+  ]);
+
+  useEffect(() => {
     let mounted = true;
 
     const applyVisibleBrowserState = (state: BrowserTabListPayload) => {
@@ -7923,114 +7990,66 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
                       </div>
                     </div>
                   ) : null}
-                  {displayMessages.map((message, index) =>
-                    message.role === "user" ? (
-                      <UserTurn
-                        key={message.id}
-                        text={message.text}
-                        createdAt={message.createdAt}
-                        attachments={message.attachments ?? []}
-                        onPreviewAttachment={openImageAttachmentPreview}
-                        onLinkClick={onOpenLinkInBrowser}
-                        onLocalLinkClick={onOpenLocalLink}
-                      />
-                    ) : (
-                      <AssistantTurn
-                        key={message.id}
-                        label={assistantLabel}
-                        mode={assistantMode}
-                        showSeparator={index > 0}
-                        showExecutionInternals={
-                          showSessionExecutionInternals
+                  <ConversationTurns
+                    messages={displayMessages}
+                    assistantLabel={assistantLabel}
+                    assistantMode={assistantMode}
+                    showExecutionInternals={showSessionExecutionInternals}
+                    onPreviewAttachment={openImageAttachmentPreview}
+                    onOpenOutput={onOpenOutput}
+                    onOpenAllArtifacts={(outputs) => {
+                      setArtifactBrowserFilter("all");
+                      setArtifactBrowserScopedOutputs(outputs);
+                      setArtifactBrowserScope("reply");
+                      setArtifactBrowserOpen(true);
+                    }}
+                    collapsedTraceByStepId={collapsedTraceByStepId}
+                    onToggleTraceStep={toggleTraceStep}
+                    onLinkClick={onOpenLinkInBrowser}
+                    onLocalLinkClick={onOpenLocalLink}
+                    memoryProposalAction={memoryProposalAction}
+                    editingMemoryProposalId={editingMemoryProposalId}
+                    memoryProposalDrafts={memoryProposalDrafts}
+                    onEditMemoryProposal={(message, proposalId) => {
+                      setEditingMemoryProposalId((current) => {
+                        const next =
+                          current === proposalId ? null : proposalId;
+                        if (next === proposalId) {
+                          const proposal = (
+                            message.memoryProposals ?? []
+                          ).find((item) => item.proposal_id === proposalId);
+                          if (proposal) {
+                            setMemoryProposalDrafts((prev) => ({
+                              ...prev,
+                              [proposalId]:
+                                prev[proposalId] ?? proposal.summary,
+                            }));
+                          }
                         }
-                        text={message.text}
-                        tone={message.tone ?? "default"}
-                        segments={message.segments ?? []}
-                        executionItems={message.executionItems ?? []}
-                        memoryProposals={message.memoryProposals ?? []}
-                        outputs={message.outputs ?? []}
-                        memoryProposalAction={memoryProposalAction}
-                        editingMemoryProposalId={editingMemoryProposalId}
-                        memoryProposalDrafts={memoryProposalDrafts}
-                        onEditMemoryProposal={(proposalId) => {
-                          setEditingMemoryProposalId((current) => {
-                            const next =
-                              current === proposalId ? null : proposalId;
-                            if (next === proposalId) {
-                              const proposal = (
-                                message.memoryProposals ?? []
-                              ).find((item) => item.proposal_id === proposalId);
-                              if (proposal) {
-                                setMemoryProposalDrafts((prev) => ({
-                                  ...prev,
-                                  [proposalId]:
-                                    prev[proposalId] ?? proposal.summary,
-                                }));
-                              }
-                            }
-                            return next;
-                          });
-                        }}
-                        onMemoryProposalDraftChange={updateMemoryProposalDraft}
-                        onAcceptMemoryProposal={handleAcceptMemoryProposal}
-                        onDismissMemoryProposal={handleDismissMemoryProposal}
-                        onOpenOutput={onOpenOutput}
-                        onOpenAllArtifacts={(outputs) => {
-                          setArtifactBrowserFilter("all");
-                          setArtifactBrowserScopedOutputs(outputs);
-                          setArtifactBrowserScope("reply");
-                          setArtifactBrowserOpen(true);
-                        }}
-                        collapsedTraceByStepId={collapsedTraceByStepId}
-                        onToggleTraceStep={toggleTraceStep}
-                        onLinkClick={onOpenLinkInBrowser}
-                        onLocalLinkClick={onOpenLocalLink}
-                        footerAccessory={
-                          message.id === lastCompletedAssistantMessageId
-                            ? sessionBrowserJumpCta
-                            : null
-                        }
-                      />
-                    ),
-                  )}
-
-                  {showLiveAssistantTurn ? (
-                    <AssistantTurn
-                      label={assistantLabel}
-                      mode={assistantMode}
-                      showSeparator={displayMessages.length > 0}
-                      showExecutionInternals={showSessionExecutionInternals}
-                      text={liveAssistantText}
-                      tone="default"
-                      segments={renderedLiveAssistantSegments}
-                      executionItems={liveExecutionItems}
-                      memoryProposals={[]}
-                      outputs={[]}
-                      memoryProposalAction={memoryProposalAction}
-                      editingMemoryProposalId={editingMemoryProposalId}
-                      memoryProposalDrafts={memoryProposalDrafts}
-                      onEditMemoryProposal={() => undefined}
-                      onMemoryProposalDraftChange={updateMemoryProposalDraft}
-                      onAcceptMemoryProposal={handleAcceptMemoryProposal}
-                      onDismissMemoryProposal={handleDismissMemoryProposal}
-                      onOpenOutput={onOpenOutput}
-                      onOpenAllArtifacts={(outputs) => {
-                        setArtifactBrowserFilter("all");
-                        setArtifactBrowserScopedOutputs(outputs);
-                        setArtifactBrowserScope("reply");
-                        setArtifactBrowserOpen(true);
-                      }}
-                      collapsedTraceByStepId={collapsedTraceByStepId}
-                      onToggleTraceStep={toggleTraceStep}
-                      onLinkClick={onOpenLinkInBrowser}
-                      onLocalLinkClick={onOpenLocalLink}
-                      live
-                      statusAccessory={sessionBrowserJumpCta}
-                      status={
-                        liveAgentStatus || (isResponding ? "Working" : "")
-                      }
-                    />
-                  ) : null}
+                        return next;
+                      });
+                    }}
+                    onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                    onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                    onDismissMemoryProposal={handleDismissMemoryProposal}
+                    assistantFooterAccessoryMessageId={
+                      lastCompletedAssistantMessageId
+                    }
+                    assistantFooterAccessory={sessionBrowserJumpCta}
+                    liveAssistantTurn={
+                      showLiveAssistantTurn
+                        ? {
+                            text: liveAssistantText,
+                            tone: "default",
+                            segments: renderedLiveAssistantSegments,
+                            executionItems: liveExecutionItems,
+                            status:
+                              liveAgentStatus || (isResponding ? "Working" : ""),
+                            statusAccessory: sessionBrowserJumpCta,
+                          }
+                        : null
+                    }
+                  />
                 </div>
               ) : (
                 <div
@@ -8445,7 +8464,7 @@ interface ComposerProps {
   onPreviewAttachment: (attachment: AttachmentListItem) => void;
 }
 
-function UserTurn({
+export function UserTurn({
   text,
   createdAt,
   attachments,
@@ -8464,6 +8483,7 @@ function UserTurn({
   const copyResetTimerRef = useRef<number | null>(null);
   const timeLabel = chatMessageTimeLabel(createdAt);
   const canCopy = text.trim().length > 0;
+  const showHoverFooter = canCopy || Boolean(timeLabel);
   const parsedQuotedSkills = useMemo(
     () => parseSerializedQuotedSkillPrompt(text),
     [text],
@@ -8513,7 +8533,9 @@ function UserTurn({
 
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
-      <div className="relative flex min-w-0 max-w-[80%] flex-col items-end gap-2">
+      <div
+        className={`relative z-0 flex min-w-0 max-w-[80%] flex-col items-end gap-2 group-hover/user-turn:z-10 group-focus-within/user-turn:z-10 ${showHoverFooter ? "pb-7" : ""}`.trim()}
+      >
         {parsedQuotedSkills.skillIds.length > 0 ? (
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             {parsedQuotedSkills.skillIds.map((skillId) => (
@@ -8572,8 +8594,8 @@ function UserTurn({
             onPreview={onPreviewAttachment}
           />
         ) : null}
-        {canCopy || timeLabel ? (
-          <div className="absolute -bottom-7 right-1 flex items-center gap-2 text-xs text-muted-foreground opacity-0 pointer-events-none transition-opacity duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+        {showHoverFooter ? (
+          <div className="absolute bottom-0 right-1 flex w-max min-w-max max-w-none items-center gap-2 whitespace-nowrap text-xs text-muted-foreground opacity-0 pointer-events-none transition-opacity duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
             {canCopy ? (
               <Button
                 type="button"
@@ -8597,7 +8619,9 @@ function UserTurn({
               </Button>
             ) : null}
             {timeLabel ? (
-              <span className="select-none tabular-nums">{timeLabel}</span>
+              <span className="select-none whitespace-nowrap tabular-nums">
+                {timeLabel}
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -8898,11 +8922,12 @@ function AssistantTurnActionsMenu({
   );
 }
 
-function AssistantTurn({
+export function AssistantTurn({
   label,
   mode,
   showSeparator = false,
   showExecutionInternals = true,
+  fitToContent = false,
   text,
   tone = "default",
   segments,
@@ -8931,6 +8956,7 @@ function AssistantTurn({
   mode: string;
   showSeparator?: boolean;
   showExecutionInternals?: boolean;
+  fitToContent?: boolean;
   text: string;
   tone?: ChatMessage["tone"];
   segments: ChatAssistantSegment[];
@@ -9006,7 +9032,6 @@ function AssistantTurn({
     showExecutionInternals &&
     renderedSegments.length > 0 &&
     !lastSegmentIsOutput;
-  const showStreamingCursor = live && lastSegmentIsOutput;
 
   const [forceExpandToken, setForceExpandToken] = useState(0);
   const hasFileEdits = useMemo(
@@ -9046,7 +9071,13 @@ function AssistantTurn({
     <div
       className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-4" : ""}`.trim()}
     >
-      <article className="min-w-0 w-full max-w-4xl rounded-lg bg-muted/60 px-3 py-2">
+      <article
+        className={
+          fitToContent
+            ? "min-w-0 inline-flex w-fit max-w-full flex-col rounded-lg bg-muted/60 px-3 py-2"
+            : "min-w-0 w-full max-w-4xl rounded-lg bg-muted/60 px-3 py-2"
+        }
+      >
         {showStatusPlaceholder ? renderStatusLine(normalizedStatus) : null}
 
         {renderedSegments.map((segment, index) =>
@@ -9103,8 +9134,6 @@ function AssistantTurn({
                 : "",
             )
           : null}
-
-        {showStreamingCursor ? <StreamingCursor /> : null}
 
         {footerAccessory ? (
           <div className="mt-2 flex justify-start">{footerAccessory}</div>
@@ -9586,7 +9615,165 @@ function AssistantTurnMemoryProposals({
   );
 }
 
-function ArtifactBrowserModal({
+export function ConversationTurns<Message extends ChatMessage>({
+  messages,
+  assistantLabel,
+  assistantMode,
+  showExecutionInternals,
+  assistantFitToContent = false,
+  onPreviewAttachment,
+  onOpenOutput,
+  onOpenAllArtifacts,
+  collapsedTraceByStepId,
+  onToggleTraceStep,
+  onLinkClick,
+  onLocalLinkClick,
+  memoryProposalAction,
+  editingMemoryProposalId,
+  memoryProposalDrafts,
+  onEditMemoryProposal,
+  onMemoryProposalDraftChange,
+  onAcceptMemoryProposal,
+  onDismissMemoryProposal,
+  assistantFooterAccessoryMessageId = null,
+  assistantFooterAccessory = null,
+  getMessageWrapperClassName,
+  liveAssistantTurn = null,
+}: {
+  messages: Message[];
+  assistantLabel: string;
+  assistantMode: string;
+  showExecutionInternals: boolean;
+  assistantFitToContent?: boolean;
+  onPreviewAttachment?: (attachment: AttachmentListItem) => void;
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  onOpenAllArtifacts: (outputs: WorkspaceOutputRecordPayload[]) => void;
+  collapsedTraceByStepId: Record<string, boolean>;
+  onToggleTraceStep: (stepId: string) => void;
+  onLinkClick?: (url: string) => void;
+  onLocalLinkClick?: (href: string) => void;
+  memoryProposalAction: {
+    proposalId: string;
+    action: "accept" | "dismiss";
+  } | null;
+  editingMemoryProposalId: string | null;
+  memoryProposalDrafts: Record<string, string>;
+  onEditMemoryProposal: (message: Message, proposalId: string) => void;
+  onMemoryProposalDraftChange: (proposalId: string, value: string) => void;
+  onAcceptMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onDismissMemoryProposal: (
+    proposal: MemoryUpdateProposalRecordPayload,
+  ) => void;
+  assistantFooterAccessoryMessageId?: string | null;
+  assistantFooterAccessory?: ReactNode;
+  getMessageWrapperClassName?: (message: Message) => string | undefined;
+  liveAssistantTurn?: {
+    text: string;
+    tone?: ChatMessage["tone"];
+    segments: ChatAssistantSegment[];
+    executionItems: ChatExecutionTimelineItem[];
+    status?: string;
+    statusAccessory?: ReactNode;
+    footerAccessory?: ReactNode;
+  } | null;
+}) {
+  return (
+    <>
+      {messages.map((message, index) => {
+        const wrapperClassName = getMessageWrapperClassName?.(message)?.trim();
+        const turn =
+          message.role === "user" ? (
+            <UserTurn
+              text={message.text}
+              createdAt={message.createdAt}
+              attachments={message.attachments ?? []}
+              onPreviewAttachment={onPreviewAttachment}
+              onLinkClick={onLinkClick}
+              onLocalLinkClick={onLocalLinkClick}
+            />
+          ) : (
+            <AssistantTurn
+              label={assistantLabel}
+              mode={assistantMode}
+              showSeparator={index > 0}
+              showExecutionInternals={showExecutionInternals}
+              fitToContent={assistantFitToContent}
+              text={message.text}
+              tone={message.tone ?? "default"}
+              segments={message.segments ?? []}
+              executionItems={message.executionItems ?? []}
+              memoryProposals={message.memoryProposals ?? []}
+              outputs={message.outputs ?? []}
+              memoryProposalAction={memoryProposalAction}
+              editingMemoryProposalId={editingMemoryProposalId}
+              memoryProposalDrafts={memoryProposalDrafts}
+              onEditMemoryProposal={(proposalId) =>
+                onEditMemoryProposal(message, proposalId)
+              }
+              onMemoryProposalDraftChange={onMemoryProposalDraftChange}
+              onAcceptMemoryProposal={onAcceptMemoryProposal}
+              onDismissMemoryProposal={onDismissMemoryProposal}
+              onOpenOutput={onOpenOutput}
+              onOpenAllArtifacts={onOpenAllArtifacts}
+              collapsedTraceByStepId={collapsedTraceByStepId}
+              onToggleTraceStep={onToggleTraceStep}
+              onLinkClick={onLinkClick}
+              onLocalLinkClick={onLocalLinkClick}
+              footerAccessory={
+                message.id === assistantFooterAccessoryMessageId
+                  ? assistantFooterAccessory
+                  : null
+              }
+            />
+          );
+
+        if (wrapperClassName) {
+          return (
+            <div key={message.id} className={wrapperClassName}>
+              {turn}
+            </div>
+          );
+        }
+        return <Fragment key={message.id}>{turn}</Fragment>;
+      })}
+
+      {liveAssistantTurn ? (
+        <AssistantTurn
+          label={assistantLabel}
+          mode={assistantMode}
+          showSeparator={messages.length > 0}
+          showExecutionInternals={showExecutionInternals}
+          fitToContent={assistantFitToContent}
+          text={liveAssistantTurn.text}
+          tone={liveAssistantTurn.tone ?? "default"}
+          segments={liveAssistantTurn.segments}
+          executionItems={liveAssistantTurn.executionItems}
+          memoryProposals={[]}
+          outputs={[]}
+          memoryProposalAction={memoryProposalAction}
+          editingMemoryProposalId={editingMemoryProposalId}
+          memoryProposalDrafts={memoryProposalDrafts}
+          onEditMemoryProposal={() => undefined}
+          onMemoryProposalDraftChange={onMemoryProposalDraftChange}
+          onAcceptMemoryProposal={onAcceptMemoryProposal}
+          onDismissMemoryProposal={onDismissMemoryProposal}
+          onOpenOutput={onOpenOutput}
+          onOpenAllArtifacts={onOpenAllArtifacts}
+          collapsedTraceByStepId={collapsedTraceByStepId}
+          onToggleTraceStep={onToggleTraceStep}
+          onLinkClick={onLinkClick}
+          onLocalLinkClick={onLocalLinkClick}
+          live
+          statusAccessory={liveAssistantTurn.statusAccessory ?? null}
+          status={liveAssistantTurn.status ?? ""}
+          footerAccessory={liveAssistantTurn.footerAccessory ?? null}
+        />
+      ) : null}
+    </>
+  );
+}
+
+export function ArtifactBrowserModal({
   open,
   filter,
   outputs,
@@ -9594,6 +9781,7 @@ function ArtifactBrowserModal({
   onClose,
   onFilterChange,
   onOpenOutput,
+  layout = "page",
 }: {
   open: boolean;
   filter: ArtifactBrowserFilter;
@@ -9602,6 +9790,7 @@ function ArtifactBrowserModal({
   onClose: () => void;
   onFilterChange: (nextFilter: ArtifactBrowserFilter) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  layout?: "page" | "card";
 }) {
   if (!open) {
     return null;
@@ -9624,10 +9813,21 @@ function ArtifactBrowserModal({
           (output) => outputBrowserFilterForOutput(output) === filter,
         ),
   );
+  const overlayClassName =
+    layout === "card"
+      ? "absolute inset-0 z-30 flex items-stretch justify-stretch bg-background/88 p-2 backdrop-blur-[2px]"
+      : "absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]";
+  const panelClassName =
+    layout === "card"
+      ? "flex h-full w-full min-h-0 flex-col overflow-hidden rounded-[22px] border border-border bg-background shadow-xl"
+      : "flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl";
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]">
-      <div className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-background shadow-xl">
+    <div
+      className={overlayClassName}
+      data-control-center-swipe-ignore={layout === "card" ? "true" : undefined}
+    >
+      <div className={panelClassName}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-foreground">
@@ -9651,67 +9851,67 @@ function ArtifactBrowserModal({
             <X className="size-3.5" />
           </Button>
         </div>
-      </div>
 
-      <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-3 py-2">
-        {filterLabels.map((item) => {
-          const active = filter === item.id;
-          return (
-            <Button
-              key={item.id}
-              variant={active ? "secondary" : "ghost"}
-              size="xs"
-              onClick={() => onFilterChange(item.id)}
-            >
-              {item.label}
-            </Button>
-          );
-        })}
-      </div>
+        <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-3 py-2">
+          {filterLabels.map((item) => {
+            const active = filter === item.id;
+            return (
+              <Button
+                key={item.id}
+                variant={active ? "secondary" : "ghost"}
+                size="xs"
+                onClick={() => onFilterChange(item.id)}
+              >
+                {item.label}
+              </Button>
+            );
+          })}
+        </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {filteredOutputs.length === 0 ? (
-          <div className="py-10 text-center text-xs text-muted-foreground">
-            No artifacts match this filter.
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {filteredOutputs.map((output) => {
-              const kindLabel = outputKindLabel(output);
-              const changeLabel = outputChangeLabel(output);
-              return (
-                <button
-                  key={output.id}
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenOutput?.(output);
-                  }}
-                  disabled={!onOpenOutput}
-                  className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left ring-border transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-card"
-                >
-                  <OutputArtifactIcon output={output} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {kindLabel}
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          {filteredOutputs.length === 0 ? (
+            <div className="py-10 text-center text-xs text-muted-foreground">
+              No artifacts match this filter.
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {filteredOutputs.map((output) => {
+                const kindLabel = outputKindLabel(output);
+                const changeLabel = outputChangeLabel(output);
+                return (
+                  <button
+                    key={output.id}
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenOutput?.(output);
+                    }}
+                    disabled={!onOpenOutput}
+                    className="group flex w-full min-w-0 items-start gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left ring-border transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-card"
+                  >
+                    <OutputArtifactIcon output={output} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {kindLabel}
+                      </div>
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {output.title || "Untitled artifact"}
+                      </div>
                     </div>
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {output.title || "Untitled artifact"}
-                    </div>
-                  </div>
-                  {changeLabel ? (
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 text-[10px] uppercase"
-                    >
-                      {changeLabel}
-                    </Badge>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        )}
+                    {changeLabel ? (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 text-[10px] uppercase"
+                      >
+                        {changeLabel}
+                      </Badge>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -9757,24 +9957,6 @@ function LiveStatusEllipsis() {
     >
       <DotmSquare3 dotSize={1} size={10} />
     </span>
-  );
-}
-
-function StreamingCursor() {
-  return (
-    <>
-      <style>{`
-        @keyframes streaming-cursor-blink {
-          0%, 50% { opacity: 1; }
-          50.01%, 100% { opacity: 0; }
-        }
-      `}</style>
-      <span
-        aria-hidden="true"
-        className="ml-0.5 inline-block h-[1em] w-[2px] -mb-[2px] translate-y-[3px] rounded-[1px] bg-foreground/65"
-        style={{ animation: "streaming-cursor-blink 1100ms steps(1) infinite" }}
-      />
-    </>
   );
 }
 
