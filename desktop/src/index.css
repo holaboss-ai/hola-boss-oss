@@ -852,68 +852,6 @@ webview {
   height: 100%;
 }
 
-/* ---- Syntax highlighting (highlight.js) ---- */
-
-.hljs {
-  display: block;
-  color: var(--foreground);
-  background: transparent;
-}
-
-.hljs-comment,
-.hljs-quote {
-  color: var(--muted-foreground);
-}
-
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-literal,
-.hljs-section,
-.hljs-link {
-  color: oklch(0.7 0.15 250);
-}
-
-.hljs-string,
-.hljs-doctag,
-.hljs-regexp {
-  color: oklch(0.75 0.14 155);
-}
-
-.hljs-number,
-.hljs-literal,
-.hljs-symbol,
-.hljs-bullet {
-  color: oklch(0.75 0.12 35);
-}
-
-.hljs-title,
-.hljs-title.class_,
-.hljs-title.function_ {
-  color: oklch(0.75 0.12 290);
-}
-
-.hljs-variable,
-.hljs-template-variable,
-.hljs-attr,
-.hljs-attribute {
-  color: oklch(0.75 0.12 340);
-}
-
-.hljs-meta,
-.hljs-meta .hljs-keyword,
-.hljs-type {
-  color: oklch(0.75 0.1 65);
-}
-
-.hljs-built_in,
-.hljs-property {
-  color: oklch(0.7 0.12 230);
-}
-
-.hljs-subst {
-  color: var(--foreground);
-}
-
 /* ---- Simple Markdown ---- */
 
 .simple-markdown {
@@ -1003,11 +941,11 @@ webview {
 }
 
 .simple-markdown .md-code-block {
-  background: color-mix(in oklch, var(--background) 80%, black);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   padding: 14px 16px;
-  margin: 12px 0;
+  margin: 0;
   overflow-x: auto;
   font-size: 0.775rem;
   line-height: 1.6;
@@ -1344,20 +1282,119 @@ webview {
 }
 
 .chat-markdown .md-code-block {
-  margin: 10px 0;
-  background: color-mix(in oklch, var(--input) 78%, var(--background) 22%);
-  border: 1px solid color-mix(in oklch, var(--border) 74%, transparent);
-  border-radius: 8px;
-  box-shadow: var(--shadow-subtle-xs);
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 12px 14px;
   color: color-mix(in oklch, var(--foreground) 94%, transparent);
   font-size: 0.725rem;
   line-height: 1.62;
   font-family: var(--font-mono);
+  overflow-x: auto;
 }
 
 .chat-markdown .md-code-block > code {
   color: inherit;
   font-family: inherit;
+}
+
+/* ---- Code block wrapper (header + copy + collapse) ---- */
+
+.md-code-block-wrapper {
+  margin: 12px 0;
+  background: color-mix(in oklch, var(--input) 78%, var(--background) 22%);
+  border: 1px solid color-mix(in oklch, var(--border) 74%, transparent);
+  border-radius: 8px;
+  box-shadow: var(--shadow-subtle-xs);
+  overflow: hidden;
+  position: relative;
+}
+
+.md-code-block-shiki {
+  font-family: var(--font-mono);
+  font-size: 0.775rem;
+  line-height: 1.62;
+  overflow-x: auto;
+}
+
+.md-code-block-shiki > pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: transparent !important;
+}
+
+.md-code-block-shiki > pre > code {
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.md-code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  background: color-mix(in oklch, var(--foreground) 3%, transparent);
+}
+
+.md-code-block-lang {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: lowercase;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+}
+
+.md-code-block-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  opacity: 0;
+  transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.md-code-block-wrapper:hover .md-code-block-copy,
+.md-code-block-wrapper:focus-within .md-code-block-copy {
+  opacity: 1;
+}
+
+.md-code-block-copy:hover {
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+  color: var(--foreground);
+}
+
+.md-code-block-collapsed {
+  max-height: 360px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 78%, transparent);
+  mask-image: linear-gradient(to bottom, black 78%, transparent);
+}
+
+.md-code-block-expand {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 2%, transparent);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.md-code-block-expand:hover {
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+  color: var(--foreground);
 }
 
 /* ---- File Preview Markdown (document reader — spacing modifier) ---- */

@@ -246,11 +246,23 @@ export function TopTabsBar({
 
     updateWorkspaceSwitcherPosition();
 
-    const syncPosition = () => updateWorkspaceSwitcherPosition();
+    let rafId: number | null = null;
+    const syncPosition = () => {
+      if (rafId !== null) {
+        return;
+      }
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        updateWorkspaceSwitcherPosition();
+      });
+    };
     window.addEventListener("resize", syncPosition);
     window.addEventListener("scroll", syncPosition, true);
 
     return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
       window.removeEventListener("resize", syncPosition);
       window.removeEventListener("scroll", syncPosition, true);
     };
