@@ -1066,8 +1066,7 @@ function defaultReportTitle(params: {
 }
 
 async function reportOutputFilePath(params: {
-  workspaceRoot: string;
-  workspaceId: string;
+  workspaceDir: string;
   title: string;
   filename?: string | null;
 }): Promise<{ absolutePath: string; relativePath: string }> {
@@ -1078,11 +1077,7 @@ async function reportOutputFilePath(params: {
     const fileName =
       index === 0 ? `${preferredStem}.md` : `${preferredStem}-${index + 1}.md`;
     const relativePath = path.posix.join("outputs", "reports", fileName);
-    const absolutePath = path.join(
-      params.workspaceRoot,
-      params.workspaceId,
-      relativePath,
-    );
+    const absolutePath = path.join(params.workspaceDir, relativePath);
     try {
       await fs.access(absolutePath);
     } catch {
@@ -2286,9 +2281,9 @@ export class RuntimeAgentToolsService {
       filename: params.filename,
       content,
     });
+    const workspaceDir = this.store.workspaceDir(params.workspaceId);
     const { absolutePath, relativePath } = await reportOutputFilePath({
-      workspaceRoot: this.options.workspaceRoot,
-      workspaceId: params.workspaceId,
+      workspaceDir,
       title,
       filename: params.filename,
     });
