@@ -6,6 +6,7 @@
 import { memo, useMemo } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CodeBlock, codeBlockFromPreNode } from "./CodeBlock";
 import { normalizeWrappedMarkdownFence } from "./markdownFenceNormalization.mjs";
 
 function appendClassName(current: string | undefined, next: string): string {
@@ -107,8 +108,9 @@ function createMarkdownComponents(
   p({ className, ...props }: MdProps) {
     return <p {...props} className={appendClassName(className, "md-p")} />;
   },
-  pre({ className, ...props }: MdProps) {
-    return <pre {...props} className={appendClassName(className, "md-code-block")} />;
+  pre({ children }: MdProps) {
+    const { language, code } = codeBlockFromPreNode(children);
+    return <CodeBlock code={code} language={language} />;
   },
   table({ className, ...props }: MdProps) {
     return <table {...props} className={appendClassName(className, "md-table")} />;

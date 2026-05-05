@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DotmSquare3 } from "@/components/ui/dotm-square-3";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8512,7 +8513,7 @@ function UserTurn({
 
   return (
     <div className="group/user-turn flex min-w-0 justify-end">
-      <div className="flex min-w-0 max-w-[80%] flex-col items-end gap-2">
+      <div className="relative flex min-w-0 max-w-[80%] flex-col items-end gap-2">
         {parsedQuotedSkills.skillIds.length > 0 ? (
           <div className="flex max-w-full flex-wrap justify-end gap-2">
             {parsedQuotedSkills.skillIds.map((skillId) => (
@@ -8572,7 +8573,7 @@ function UserTurn({
           />
         ) : null}
         {canCopy || timeLabel ? (
-          <div className="flex items-center justify-end gap-2 pr-1 text-xs text-muted-foreground opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+          <div className="absolute -bottom-7 right-1 flex items-center gap-2 text-xs text-muted-foreground opacity-0 pointer-events-none transition-opacity duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
             {canCopy ? (
               <Button
                 type="button"
@@ -8997,8 +8998,15 @@ function AssistantTurn({
         : [];
   const showStatusPlaceholder =
     live && Boolean(normalizedStatus) && renderedSegments.length === 0;
+  const lastSegmentIsOutput =
+    renderedSegments.length > 0 &&
+    renderedSegments[renderedSegments.length - 1]?.kind === "output";
   const showWorkingStatusLine =
-    live && showExecutionInternals && renderedSegments.length > 0;
+    live &&
+    showExecutionInternals &&
+    renderedSegments.length > 0 &&
+    !lastSegmentIsOutput;
+  const showStreamingCursor = live && lastSegmentIsOutput;
 
   const [forceExpandToken, setForceExpandToken] = useState(0);
   const hasFileEdits = useMemo(
@@ -9020,22 +9028,15 @@ function AssistantTurn({
   const hasAnyContent = renderedSegments.length > 0;
   const showActionsMenu = hasAnyContent && !live;
   const renderStatusLine = (nextLabel: string, className = "") => {
-    if (!showExecutionInternals) {
-      return (
-        <TypingStatusLine
-          className={className}
-          statusAccessory={statusAccessory}
-        />
-      );
-    }
+    const resolvedLabel = nextLabel.trim() || "Working";
     if (!statusAccessory) {
-      return <LiveStatusLine label={nextLabel} className={className} />;
+      return <LiveStatusLine label={resolvedLabel} className={className} />;
     }
     return (
       <div
         className={`flex min-w-0 items-center justify-between gap-3 ${className}`.trim()}
       >
-        <LiveStatusLine label={nextLabel} className="min-w-0" />
+        <LiveStatusLine label={resolvedLabel} className="min-w-0" />
         <div className="shrink-0">{statusAccessory}</div>
       </div>
     );
@@ -9069,7 +9070,7 @@ function AssistantTurn({
           ) : segment.tone === "error" ? (
             <div
               key={`output-${index}`}
-              className="theme-chat-system-bubble mt-2 rounded-xl border px-3 py-2.5 text-xs text-foreground"
+              className="theme-chat-system-bubble mt-2 first:mt-0 rounded-xl border px-3 py-2.5 text-xs text-foreground"
             >
               <div className="flex items-center gap-2">
                 <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
@@ -9085,7 +9086,7 @@ function AssistantTurn({
           ) : (
             <SimpleMarkdown
               key={`output-${index}`}
-              className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
+              className="chat-markdown chat-assistant-markdown mt-2 first:mt-0 max-w-full text-foreground"
               onLinkClick={onLinkClick}
               onLocalLinkClick={onLocalLinkClick}
             >
@@ -9098,10 +9099,12 @@ function AssistantTurn({
           ? renderStatusLine(
               "Working",
               renderedSegments.some((segment) => segment.kind === "execution")
-                ? "mt-1"
+                ? ""
                 : "",
             )
           : null}
+
+        {showStreamingCursor ? <StreamingCursor /> : null}
 
         {footerAccessory ? (
           <div className="mt-2 flex justify-start">{footerAccessory}</div>
@@ -9748,27 +9751,29 @@ function IntegrationErrorBanner({ details }: { details: string[] }) {
 
 function LiveStatusEllipsis() {
   return (
+    <span
+      aria-hidden="true"
+      className="inline-flex shrink-0 items-center text-muted-foreground"
+    >
+      <DotmSquare3 dotSize={1} size={10} />
+    </span>
+  );
+}
+
+function StreamingCursor() {
+  return (
     <>
       <style>{`
-        @keyframes status-dot-wave {
-          0%, 60%, 100% { transform: translateY(0); }
-          30% { transform: translateY(-3px); }
+        @keyframes streaming-cursor-blink {
+          0%, 50% { opacity: 1; }
+          50.01%, 100% { opacity: 0; }
         }
       `}</style>
-      <span aria-hidden="true" className="inline-flex items-baseline">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <span
-            key={`status-dot-${index}`}
-            className="inline-block"
-            style={{
-              animation: "status-dot-wave 1200ms ease-in-out infinite",
-              animationDelay: `${index * 120}ms`,
-            }}
-          >
-            .
-          </span>
-        ))}
-      </span>
+      <span
+        aria-hidden="true"
+        className="ml-0.5 inline-block h-[1em] w-[2px] -mb-[2px] translate-y-[3px] rounded-[1px] bg-foreground/65"
+        style={{ animation: "streaming-cursor-blink 1100ms steps(1) infinite" }}
+      />
     </>
   );
 }
@@ -9789,39 +9794,10 @@ function LiveStatusLine({
     <div
       aria-live="polite"
       key={normalizedLabel}
-      className={`inline-flex items-baseline gap-0.5 text-xs leading-6 text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-0.5 duration-200 ease-out ${className}`.trim()}
+      className={`flex w-fit items-center gap-1.5 text-xs leading-none text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-0.5 duration-200 ease-out ${className}`.trim()}
     >
+      <LiveStatusEllipsis />
       <span>{normalizedLabel}</span>
-      <LiveStatusEllipsis />
-    </div>
-  );
-}
-
-function TypingStatusLine({
-  className = "",
-  statusAccessory = null,
-}: {
-  className?: string;
-  statusAccessory?: ReactNode;
-}) {
-  const indicator = (
-    <div
-      aria-live="polite"
-      aria-label="Assistant is typing"
-      className={`inline-flex items-center text-[18px] leading-none tracking-[0.18em] text-muted-foreground/78 animate-in fade-in-0 duration-200 ease-out ${className}`.trim()}
-    >
-      <LiveStatusEllipsis />
-    </div>
-  );
-  if (!statusAccessory) {
-    return indicator;
-  }
-  return (
-    <div
-      className={`flex min-w-0 items-center justify-between gap-3 ${className}`.trim()}
-    >
-      <div className="min-w-0">{indicator}</div>
-      <div className="shrink-0">{statusAccessory}</div>
     </div>
   );
 }
@@ -10013,7 +9989,7 @@ function TraceStepGroup({
             : "Execution trace";
 
   return (
-    <div className="mt-3">
+    <div className="mt-3 first:mt-0">
       <button
         type="button"
         onClick={() => setGroupExpanded((v) => !v)}
@@ -10070,6 +10046,29 @@ function TraceStepGroup({
   );
 }
 
+function AttachmentImageThumb({ file }: { file: File }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setObjectUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  if (loadFailed || !objectUrl) {
+    return <ImageIcon className="size-4 shrink-0 text-primary" />;
+  }
+  return (
+    <img
+      alt=""
+      className="size-7 shrink-0 rounded-md object-cover"
+      onError={() => setLoadFailed(true)}
+      src={objectUrl}
+    />
+  );
+}
+
 function AttachmentList({
   attachments,
   onRemove,
@@ -10093,16 +10092,24 @@ function AttachmentList({
               attachment.workspace_path.trim()),
           );
 
+        const icon =
+          attachment.kind === "image" && attachment.file ? (
+            <AttachmentImageThumb file={attachment.file} />
+          ) : attachment.kind === "image" ? (
+            <ImageIcon className="size-4 shrink-0 text-primary" />
+          ) : attachment.kind === "folder" ? (
+            <Folder className="size-3.5 shrink-0 text-primary" />
+          ) : (
+            <FileText className="size-3.5 shrink-0 text-primary" />
+          );
+
+        const labelClassName = "truncate";
+        const isImageThumb = attachment.kind === "image" && Boolean(attachment.file);
+
         const content = (
           <>
-            {attachment.kind === "image" ? (
-              <ImageIcon className="size-3 shrink-0 text-primary" />
-            ) : attachment.kind === "folder" ? (
-              <Folder className="size-3 shrink-0 text-primary" />
-            ) : (
-              <FileText className="size-3 shrink-0 text-primary" />
-            )}
-            <span className="truncate">
+            {icon}
+            <span className={labelClassName}>
               {attachmentButtonLabel(attachment)}
             </span>
           </>
@@ -10110,16 +10117,21 @@ function AttachmentList({
 
         return (
           <div
+            className="group/attachment bg-muted relative inline-flex max-w-full items-center gap-2 rounded-lg border border-border pr-2 text-xs text-foreground"
             key={attachment.id}
-            className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-foreground"
+            style={{
+              paddingLeft: isImageThumb ? "4px" : "10px",
+              paddingTop: isImageThumb ? "4px" : "5px",
+              paddingBottom: isImageThumb ? "4px" : "5px",
+            }}
           >
             {isImagePreviewable ? (
               <button
-                type="button"
-                onClick={() => onPreview?.(attachment)}
-                className="-my-1 -ml-1 flex min-w-0 items-center gap-2 rounded-full px-1 py-1 text-left transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                 aria-label={`Preview ${attachment.name}`}
+                className="flex min-w-0 items-center gap-2 rounded-md text-left transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                onClick={() => onPreview?.(attachment)}
                 title={`Preview ${attachment.name}`}
+                type="button"
               >
                 {content}
               </button>
@@ -10128,10 +10140,10 @@ function AttachmentList({
             )}
             {onRemove ? (
               <button
-                type="button"
-                onClick={() => onRemove(attachment.id)}
-                className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
                 aria-label={`Remove ${attachment.name}`}
+                className="grid size-4 shrink-0 place-items-center rounded-full text-muted-foreground opacity-0 transition group-hover/attachment:opacity-100 hover:text-foreground"
+                onClick={() => onRemove(attachment.id)}
+                type="button"
               >
                 <X className="size-3" />
               </button>
@@ -11132,10 +11144,18 @@ function Composer({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`overflow-hidden rounded-2xl bg-background shadow-md ${
-          isDragActive ? "ring-1 ring-primary/40 bg-primary/[0.04]" : ""
-        }`}
+        className="relative overflow-hidden rounded-2xl bg-background shadow-md"
       >
+        {isDragActive ? (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border border-dashed border-primary/50 bg-background/85 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-1.5 text-primary">
+              <Paperclip className="size-5" />
+              <span className="text-xs font-medium">
+                Drop files to attach
+              </span>
+            </div>
+          </div>
+        ) : null}
         <input
           ref={fileInputRef}
           type="file"
