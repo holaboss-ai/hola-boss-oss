@@ -4,6 +4,7 @@ import {
   isValidElement,
   type ReactNode,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { type BundledLanguage, bundledLanguages, codeToHtml } from "shiki";
@@ -121,6 +122,14 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const [theme, setTheme] = useState(pickShikiTheme);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const explicitLanguage = resolveLanguage(language);
+  const resolvedLanguage =
+    explicitLanguage === "text" ? detectLanguage(trimmed) : explicitLanguage;
+
+  const cacheKey = `${theme}:${resolvedLanguage}:${trimmed}`;
+  const [inView, setInView] = useState(() => highlightCache.has(cacheKey));
 
   useEffect(() => {
     const observer = new MutationObserver(() => setTheme(pickShikiTheme()));
@@ -131,22 +140,43 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
     return () => observer.disconnect();
   }, []);
 
-  const explicitLanguage = resolveLanguage(language);
-  const resolvedLanguage =
-    explicitLanguage === "text" ? detectLanguage(trimmed) : explicitLanguage;
+  useEffect(() => {
+    if (inView) return;
+    if (highlightCache.has(cacheKey)) {
+      setInView(true);
+      return;
+    }
+    const node = wrapperRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setInView(true);
+            observer.disconnect();
+            break;
+          }
+        }
+      },
+      { rootMargin: "200px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [cacheKey, inView]);
 
   useEffect(() => {
-    let cancelled = false;
-    const cacheKey = `${theme}:${resolvedLanguage}:${trimmed}`;
     const cached = highlightCache.get(cacheKey);
     if (cached) {
       setHighlighted(cached);
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
     setHighlighted(null);
+    if (!inView) return;
 
+    let cancelled = false;
     void (async () => {
       try {
         const html = await codeToHtml(trimmed, {
@@ -168,7 +198,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
     return () => {
       cancelled = true;
     };
-  }, [trimmed, resolvedLanguage, theme]);
+  }, [cacheKey, inView, resolvedLanguage, theme, trimmed]);
 
   async function handleCopy() {
     try {
@@ -187,7 +217,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
   })();
 
   return (
-    <div className="md-code-block-wrapper group/code-block">
+    <div className="md-code-block-wrapper group/code-block" ref={wrapperRef}>
       <div className="md-code-block-header">
         <span className="md-code-block-lang">{langLabel}</span>
         <button
