@@ -9,7 +9,16 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
   enableLogs: !!process.env.SENTRY_DSN,
-  attachScreenshot: !!process.env.SENTRY_DSN,
+  // attachScreenshot was the dominant idle-CPU culprit on desktop: when true,
+  // the @sentry/electron screenshots integration calls
+  // `BrowserWindow.capturePage()` + `toPNG()` inside `processEvent` for every
+  // non-transaction event the SDK ships — and `enableLogs` + the console
+  // logging integration below funnel info/warn/error console writes through
+  // that same path. CPU profile on a fresh idle launch attributed >70% of
+  // process time to a single `processEvent` frame in screenshots.js.
+  // If we ever want screenshots in crash reports, capture them manually
+  // inside `beforeSend` and gate on `event.level === "fatal"`.
+  attachScreenshot: false,
   maxBreadcrumbs: 200,
   integrations: [
     Sentry.consoleLoggingIntegration({
