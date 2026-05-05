@@ -4590,6 +4590,21 @@ async function bootstrapRuntimeDatabase() {
   }
 }
 
+// `persistRuntimeProcessState` is invoked from ~13 sites and fires every
+// time the embedded runtime transitions between starting/healthy/stopped/
+// error. Each call previously opened a fresh sqlite handle, recompiled
+// this 50-line INSERT+UPSERT, ran it, and closed the handle. The `prepare`
+// step alone showed up at 261+254+39 ≈ 554 ms self in a 114s --cpu-prof
+// trace; the surrounding `Database` constructor and `close` added ~180 ms
+// more. Cache one open handle + one prepared statement at module scope so
+// each call collapses to a single `.run({...})` after the first hit.
+//
+// Lifetime: the cached handle is closed in the existing app-quit handler
+// alongside other runtime cleanup (see `releaseCachedRuntimeDatabase`
+// below) so we don't strand a sqlite reader across an Electron relaunch.
+let cachedRuntimeProcessStateDatabase: Database.Database | null = null;
+let cachedRuntimeProcessStateStatement: Database.Statement | null = null;
+
 function persistRuntimeProcessState(update: {
   pid?: number | null;
   status: string;
@@ -4598,72 +4613,85 @@ function persistRuntimeProcessState(update: {
   lastHealthyAt?: string | null;
   lastError?: string | null;
 }) {
-  const database = openRuntimeDatabase();
+  if (!cachedRuntimeProcessStateDatabase) {
+    cachedRuntimeProcessStateDatabase = openRuntimeDatabase();
+  }
+  if (!cachedRuntimeProcessStateStatement) {
+    cachedRuntimeProcessStateStatement = cachedRuntimeProcessStateDatabase.prepare(
+      `
+      INSERT INTO runtime_process_state (
+        process_key,
+        pid,
+        status,
+        bind_host,
+        bind_port,
+        base_url,
+        launch_id,
+        sandbox_root,
+        last_started_at,
+        last_stopped_at,
+        last_healthy_at,
+        last_error,
+        updated_at
+      ) VALUES (
+        @process_key,
+        @pid,
+        @status,
+        @bind_host,
+        @bind_port,
+        @base_url,
+        @launch_id,
+        @sandbox_root,
+        @last_started_at,
+        @last_stopped_at,
+        @last_healthy_at,
+        @last_error,
+        @updated_at
+      )
+      ON CONFLICT(process_key) DO UPDATE SET
+        pid = excluded.pid,
+        status = excluded.status,
+        bind_host = excluded.bind_host,
+        bind_port = excluded.bind_port,
+        base_url = excluded.base_url,
+        launch_id = excluded.launch_id,
+        sandbox_root = excluded.sandbox_root,
+        last_started_at = COALESCE(excluded.last_started_at, runtime_process_state.last_started_at),
+        last_stopped_at = COALESCE(excluded.last_stopped_at, runtime_process_state.last_stopped_at),
+        last_healthy_at = COALESCE(excluded.last_healthy_at, runtime_process_state.last_healthy_at),
+        last_error = excluded.last_error,
+        updated_at = excluded.updated_at
+    `,
+    );
+  }
   try {
-    database
-      .prepare(
-        `
-        INSERT INTO runtime_process_state (
-          process_key,
-          pid,
-          status,
-          bind_host,
-          bind_port,
-          base_url,
-          launch_id,
-          sandbox_root,
-          last_started_at,
-          last_stopped_at,
-          last_healthy_at,
-          last_error,
-          updated_at
-        ) VALUES (
-          @process_key,
-          @pid,
-          @status,
-          @bind_host,
-          @bind_port,
-          @base_url,
-          @launch_id,
-          @sandbox_root,
-          @last_started_at,
-          @last_stopped_at,
-          @last_healthy_at,
-          @last_error,
-          @updated_at
-        )
-        ON CONFLICT(process_key) DO UPDATE SET
-          pid = excluded.pid,
-          status = excluded.status,
-          bind_host = excluded.bind_host,
-          bind_port = excluded.bind_port,
-          base_url = excluded.base_url,
-          launch_id = excluded.launch_id,
-          sandbox_root = excluded.sandbox_root,
-          last_started_at = COALESCE(excluded.last_started_at, runtime_process_state.last_started_at),
-          last_stopped_at = COALESCE(excluded.last_stopped_at, runtime_process_state.last_stopped_at),
-          last_healthy_at = COALESCE(excluded.last_healthy_at, runtime_process_state.last_healthy_at),
-          last_error = excluded.last_error,
-          updated_at = excluded.updated_at
-      `,
-        )
-      .run({
-        process_key: "embedded-runtime",
-        pid: update.pid ?? null,
-        status: update.status,
-        bind_host: "127.0.0.1",
-        bind_port: runtimeApiPort(),
-        base_url: runtimeBaseUrl(),
-        launch_id: DESKTOP_LAUNCH_ID,
-        sandbox_root: runtimeSandboxRoot(),
-        last_started_at: update.lastStartedAt ?? null,
-        last_stopped_at: update.lastStoppedAt ?? null,
-        last_healthy_at: update.lastHealthyAt ?? null,
-        last_error: update.lastError ?? null,
-        updated_at: utcNowIso(),
-      });
-  } finally {
-    database.close();
+    cachedRuntimeProcessStateStatement.run({
+      process_key: "embedded-runtime",
+      pid: update.pid ?? null,
+      status: update.status,
+      bind_host: "127.0.0.1",
+      bind_port: runtimeApiPort(),
+      base_url: runtimeBaseUrl(),
+      launch_id: DESKTOP_LAUNCH_ID,
+      sandbox_root: runtimeSandboxRoot(),
+      last_started_at: update.lastStartedAt ?? null,
+      last_stopped_at: update.lastStoppedAt ?? null,
+      last_healthy_at: update.lastHealthyAt ?? null,
+      last_error: update.lastError ?? null,
+      updated_at: utcNowIso(),
+    });
+  } catch (error) {
+    // Drop the cached handle on failure so the next call retries cleanly
+    // instead of reusing a wedged statement (e.g. after a schema migration
+    // or accidental DB delete during dev).
+    try {
+      cachedRuntimeProcessStateDatabase?.close();
+    } catch {
+      // ignore close errors on the failure path
+    }
+    cachedRuntimeProcessStateDatabase = null;
+    cachedRuntimeProcessStateStatement = null;
+    throw error;
   }
 }
 
@@ -15431,6 +15459,16 @@ async function ensureAppQuitCleanup(): Promise<void> {
       })
       .finally(() => {
         appQuitCleanupPromise = null;
+        // Release the long-lived sqlite handle held by
+        // `persistRuntimeProcessState`. Best-effort — the next launch
+        // re-opens fresh.
+        try {
+          cachedRuntimeProcessStateDatabase?.close();
+        } catch {
+          // ignore close errors during teardown
+        }
+        cachedRuntimeProcessStateDatabase = null;
+        cachedRuntimeProcessStateStatement = null;
       });
   }
   await appQuitCleanupPromise;
