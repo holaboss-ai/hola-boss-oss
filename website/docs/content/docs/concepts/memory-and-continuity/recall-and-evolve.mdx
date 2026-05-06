@@ -16,7 +16,7 @@ The current flow is:
 3. The current run may use pending proposals as ephemeral context without promoting them into durable memory yet.
 4. When the run finishes, the runtime persists `turn_results`.
 5. An immediate continuity writeback runs inline after the turn result is committed.
-6. That writeback updates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+6. That writeback updates volatile runtime projections under `.holaboss/memory/runtime/`, including `session-memory/`.
 7. The runtime then persists a queued evolve job for heavier durable-memory and skill-review work.
 8. The evolve worker reloads the finished turn, recent session state, and current memory catalog state.
 9. Deterministic and optional model-assisted extraction promote durable workspace facts, procedures, and repeated blockers into markdown memory plus catalog rows.
@@ -77,7 +77,7 @@ This boundary is intentional. The system can prepare candidates, summarize evide
 Reusable procedural patterns do not become live skills automatically. The current lifecycle is:
 
 1. queued evolve reviews a cadence turn
-2. if it finds a reusable pattern, it writes a draft under `memory/workspace/<workspace-id>/evolve/skills/<candidate-id>/SKILL.md`
+2. if it finds a reusable pattern, it writes a draft under `workspace/<workspace-id>/evolve/skills/<candidate-id>/SKILL.md`
 3. the runtime stores candidate metadata in `state/runtime.db`
 4. candidate skills that merit attention are raised through proposal surfaces rather than silently activated
 5. an accepted proposal opens a tightly scoped review session

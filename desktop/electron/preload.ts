@@ -1320,6 +1320,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:getWorkspaceLifecycle", workspaceId) as Promise<WorkspaceLifecyclePayload>,
     activateWorkspace: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:activateWorkspace", workspaceId) as Promise<WorkspaceLifecyclePayload>,
+    openWorkspace: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:openWorkspace", workspaceId) as Promise<WorkspaceOpenSessionPayload>,
     listInstalledApps: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
     removeInstalledApp: (workspaceId: string, appId: string) =>

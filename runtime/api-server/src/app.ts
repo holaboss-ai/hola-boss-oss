@@ -85,6 +85,10 @@ import {
   type MemoryServiceLike
 } from "./memory.js";
 import {
+  migrateLegacyWorkspaceStatePath,
+  resolveMemoryFilePath,
+} from "./workspace-bundle-paths.js";
+import {
   FileRuntimeConfigService,
   RuntimeConfigServiceError,
   type RuntimeConfigServiceLike
@@ -445,17 +449,6 @@ function optionalDict(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
-function resolveMemoryRootDir(workspaceRoot: string): string {
-  const configured = (process.env.MEMORY_ROOT_DIR ?? "").trim();
-  if (!configured) {
-    return path.join(workspaceRoot, "memory");
-  }
-  if (path.isAbsolute(configured)) {
-    return path.resolve(configured);
-  }
-  return path.resolve(path.join(workspaceRoot, configured));
-}
-
 function sessionMemoryPath(workspaceId: string, sessionId: string): string {
   const sanitizedSessionId =
     sessionId
@@ -479,8 +472,12 @@ function loadSessionResumeContextForApi(params: {
   sessionId: string;
 }): { session_memory_path: string; session_memory_excerpt: string } | null {
   const relPath = sessionMemoryPath(params.workspaceId, params.sessionId);
-  const memoryRoot = resolveMemoryRootDir(params.workspaceRoot);
-  const targetPath = path.join(memoryRoot, relPath);
+  const targetPath = resolveMemoryFilePath({
+    workspaceRoot: params.workspaceRoot,
+    workspaceDir: path.join(params.workspaceRoot, params.workspaceId),
+    workspaceId: params.workspaceId,
+    relPath,
+  });
   if (
     !fs.existsSync(targetPath) ||
     !fs.statSync(targetPath, { throwIfNoEntry: false })?.isFile()
@@ -1309,7 +1306,11 @@ function workspaceLegacySessionHistoryDir(
 ): string | null {
   try {
     const workspaceDir = store.assertWorkspaceFolderHealthy(workspaceId);
-    return path.join(workspaceDir, ".holaboss", "legacy-session-histories");
+    return migrateLegacyWorkspaceStatePath({
+      workspaceDir,
+      relativeSegments: ["legacy-session-histories"],
+      legacyRelativeSegments: [".holaboss", "legacy-session-histories"],
+    });
   } catch {
     return null;
   }
@@ -5760,7 +5761,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   });
 
   // Workspaces activated in the current runtime boot. First activation
-  // per workspace per boot reads the .holaboss/workspace_id identity file
+  // per workspace per boot reads the .holaboss/state/workspace_id identity file
   // to confirm the folder on disk really belongs to this workspace. We
   // don't re-check on every write — users are free to edit AGENTS.md,
   // skills, workspace.yaml, apps, etc.

@@ -5,6 +5,10 @@ import path from "node:path";
 import { afterEach, test } from "node:test";
 
 import { FilesystemMemoryService as MemoryService } from "./memory.js";
+import {
+  globalMemoryDirForWorkspaceRoot,
+  workspaceMemoryDir,
+} from "./workspace-bundle-paths.js";
 
 const tempDirs: string[] = [];
 const envNames = ["MEMORY_BACKEND", "MEMORY_ROOT_DIR"] as const;
@@ -37,14 +41,15 @@ function makeTempDir(prefix: string): string {
 test("filesystem memory service preserves search/get/upsert/status/sync payload shape", async () => {
   const root = makeTempDir("hb-memory-");
   const workspaceRoot = path.join(root, "workspace");
-  fs.mkdirSync(path.join(workspaceRoot, "memory", "workspace", "workspace-1"), { recursive: true });
-  fs.mkdirSync(path.join(workspaceRoot, "memory", "preference"), { recursive: true });
+  const legacyMemoryRoot = globalMemoryDirForWorkspaceRoot(workspaceRoot);
+  fs.mkdirSync(path.join(legacyMemoryRoot, "workspace", "workspace-1"), { recursive: true });
+  fs.mkdirSync(path.join(legacyMemoryRoot, "preference"), { recursive: true });
   fs.writeFileSync(
-    path.join(workspaceRoot, "memory", "workspace", "workspace-1", "notes.md"),
+    path.join(legacyMemoryRoot, "workspace", "workspace-1", "notes.md"),
     "# Notes\ncoffee preference\nsecond line\n",
     "utf8"
   );
-  fs.writeFileSync(path.join(workspaceRoot, "memory", "preference", "profile.md"), "coffee and tea\n", "utf8");
+  fs.writeFileSync(path.join(legacyMemoryRoot, "preference", "profile.md"), "coffee and tea\n", "utf8");
 
   const service = new MemoryService({ workspaceRoot });
 
@@ -80,6 +85,8 @@ test("filesystem memory service preserves search/get/upsert/status/sync payload 
     workspace_id: "workspace-1",
     path: "MEMORY.md"
   });
+  const captured = await service.capture({ workspace_id: "workspace-1" });
+  const capturedFiles = captured.files as Record<string, string>;
 
   assert.equal(Array.isArray(searched.results), true);
   assert.equal((searched.results as Array<Record<string, unknown>>).length >= 1, true);
@@ -104,7 +111,18 @@ test("filesystem memory service preserves search/get/upsert/status/sync payload 
     path: "MEMORY.md",
     text: "# Memory Index\n"
   });
+  assert.equal(capturedFiles["workspace/workspace-1/notes.md"], "# Notes\ncoffee preference\nsecond line\n");
+  assert.equal(capturedFiles["workspace/workspace-1/new.md"], "hello");
+  assert.equal(capturedFiles["MEMORY.md"], "# Memory Index\n");
   assert.equal(status.backend, "builtin");
+  assert.equal(
+    fs.existsSync(path.join(workspaceMemoryDir(path.join(workspaceRoot, "workspace-1")), "notes.md")),
+    true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(legacyMemoryRoot, "workspace", "workspace-1", "notes.md")),
+    false,
+  );
   assert.deepEqual(synced, {
     success: true,
     status

@@ -29,8 +29,9 @@ test("ensureWorkspaceGitRepo initializes a workspace repo with an initial agent 
     "utf8",
   );
   await fs.mkdir(path.join(workspaceDir, ".holaboss"), { recursive: true });
+  await fs.mkdir(path.join(workspaceDir, ".holaboss", "state"), { recursive: true });
   await fs.writeFile(
-    path.join(workspaceDir, ".holaboss", "workspace_id"),
+    path.join(workspaceDir, ".holaboss", "state", "workspace_id"),
     "workspace-1\n",
     "utf8",
   );

@@ -38,7 +38,7 @@ test("workspace desktop error normalization unwraps Electron IPC errors before m
   assert.match(source, /return unwrappedMessage;/);
 });
 
-test("workspace desktop rechecks runtime status while bootstrap is waiting for startup", async () => {
+test("workspace desktop hydrates workspace summaries from cached or live sources while bootstrap runs", async () => {
   const source = await readFile(WORKSPACE_DESKTOP_PATH, "utf8");
 
   assert.match(source, /const BOOTSTRAP_IPC_TIMEOUT_MS = 8_000;/);
@@ -58,6 +58,15 @@ test("workspace desktop rechecks runtime status while bootstrap is waiting for s
     source,
     /if \(bootstrapErrors\.length > 0\) \{\s*setWorkspaceErrorMessage\(bootstrapErrors\[0\]\);\s*\}/,
   );
+  assert.match(source, /type WorkspaceListLoadSource = "auto" \| "live" \| "cached";/);
+  assert.match(
+    source,
+    /const workspaceListSource =\s*source === "auto"\s*\?\s*runtimeReadyForWorkspaceData\s*\?\s*"live"\s*:\s*"cached"\s*:\s*source;/,
+  );
+  assert.match(
+    source,
+    /const workspaceResponse = workspaceListSource === "live"\s*\?\s*await window\.electronAPI\.workspace\.listWorkspaces\(\)\s*:\s*await window\.electronAPI\.workspace\.listWorkspacesCached\(\);/,
+  );
   assert.match(
     source,
     /const unsubscribe = window\.electronAPI\.runtime\.onStateChange\(\(status\) => \{/,
@@ -68,17 +77,17 @@ test("workspace desktop rechecks runtime status while bootstrap is waiting for s
   );
   assert.match(
     source,
-    /if \(\s*hasHydratedWorkspaceList \|\|\s*isLoadingBootstrap \|\|\s*runtimeStatus\?\.status !== "starting"\s*\) \{\s*return;\s*\}/,
+    /const workspaceListSource =\s*runtimeReadyForWorkspaceData \? "live" : "cached";/,
   );
   assert.match(
     source,
-    /const refreshStartingRuntimeStatus = \(\) => \{\s*void window\.electronAPI\.runtime[\s\S]*?\.getStatus\(\)[\s\S]*?setRuntimeStatus\(status\);[\s\S]*?\}\s*;\s*\}/,
+    /const result = await loadWorkspaceData\(\{\s*preserveSelection: true,\s*allowEmpty: workspaceListSource === "live",\s*source: workspaceListSource,\s*\}\);/,
   );
   assert.match(
     source,
-    /const timer = window\.setInterval\(refreshStartingRuntimeStatus, 1000\);/,
+    /setHasHydratedWorkspaceList\(\s*\(current\) =>\s*current \|\| result\.source === "live" \|\| result\.resolvedCount > 0,\s*\);/,
   );
-  assert.match(source, /window\.clearInterval\(timer\);/);
+  assert.match(source, /await window\.electronAPI\.workspace\.listWorkspacesCached\(\);/);
 });
 
 test("workspace creation can copy an existing workspace browser profile or import from a browser", async () => {

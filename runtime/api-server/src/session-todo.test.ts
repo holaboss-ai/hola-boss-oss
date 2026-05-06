@@ -105,7 +105,7 @@ test("session todo persists phased state and reads back an empty session indepen
       },
     ]);
 
-    const persistedStatePath = path.join(workspaceRoot, workspaceId, ".holaboss", "todos", "session-1.json");
+    const persistedStatePath = path.join(workspaceRoot, workspaceId, ".holaboss", "state", "todos", "session-1.json");
     assert.deepEqual(JSON.parse(fs.readFileSync(persistedStatePath, "utf8")), {
       version: 2,
       session_id: "session-1",

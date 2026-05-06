@@ -425,8 +425,11 @@ interface RuntimeNotificationListOptionsPayload {
     spotlight: SpotlightItemPayload[];
   }
 
+  type WorkspaceLocationPayload = "local" | "cloud";
+
   interface WorkspaceRecordPayload {
     id: string;
+    location: WorkspaceLocationPayload;
     name: string;
     status: string;
     harness: string | null;
@@ -1164,6 +1167,18 @@ interface RuntimeNotificationListOptionsPayload {
     blocking_apps: WorkspaceLifecycleBlockingAppPayload[];
   }
 
+  interface WorkspaceRuntimeSessionPayload {
+    workspace_id: string;
+    location: WorkspaceLocationPayload;
+    runtime_base_url: string;
+    runtime_auth_token: string | null;
+    workspace_root: string;
+  }
+
+  interface WorkspaceOpenSessionPayload extends WorkspaceRuntimeSessionPayload {
+    lifecycle: WorkspaceLifecyclePayload;
+  }
+
   interface WorkspaceOutputRecordPayload {
     id: string;
     workspace_id: string;
@@ -1690,6 +1705,7 @@ interface RuntimeNotificationListOptionsPayload {
       listWorkspacesCached: () => Promise<WorkspaceListResponsePayload>;
       getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
+      openWorkspace: (workspaceId: string) => Promise<WorkspaceOpenSessionPayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
       removeInstalledApp: (workspaceId: string, appId: string) => Promise<void>;
       listAppCatalog: (params: { source?: "marketplace" | "local" }) => Promise<AppCatalogListResponse>;

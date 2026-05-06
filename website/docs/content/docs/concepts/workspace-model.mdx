@@ -26,24 +26,6 @@ Workspaces live under the runtime OS root. In desktop mode that root comes from 
         accent: "engine",
         children: [
           {
-            name: ".holaboss/",
-            meta: "Shared MCP sidecar state",
-            children: [
-              {
-                name: "workspace-mcp-sidecar-state.json",
-                meta: "Sidecar registry",
-              },
-              {
-                name: "<server>.workspace-mcp-sidecar.stdout.log",
-                meta: "Sidecar stdout",
-              },
-              {
-                name: "<server>.workspace-mcp-sidecar.stderr.log",
-                meta: "Sidecar stderr",
-              },
-            ],
-          },
-          {
             name: "<workspace-id>/",
             accent: "engine",
             children: [
@@ -83,12 +65,47 @@ Workspaces live under the runtime OS root. In desktop mode that root comes from 
               },
               {
                 name: ".holaboss/",
-                meta: "Workspace runtime state",
+                meta: "Workspace-owned runtime state and memory",
                 children: [
-                  { name: "workspace_id", meta: "Identity marker" },
                   {
-                    name: "harness-session-state.json",
-                    meta: "Harness session mapping",
+                    name: "state/",
+                    meta: "Workspace runtime state",
+                    children: [
+                      { name: "workspace_id", meta: "Identity marker" },
+                      {
+                        name: "harness-session-state.json",
+                        meta: "Harness session mapping",
+                      },
+                      { name: "data.db", meta: "Shared workspace SQLite" },
+                      {
+                        name: "workspace-mcp-sidecar-state.json",
+                        meta: "Sidecar registry",
+                      },
+                      {
+                        name: "<server>.workspace-mcp-sidecar.stdout.log",
+                        meta: "Sidecar stdout",
+                      },
+                      {
+                        name: "<server>.workspace-mcp-sidecar.stderr.log",
+                        meta: "Sidecar stderr",
+                      },
+                      {
+                        name: "todos/",
+                        meta: "Session todo state",
+                      },
+                      {
+                        name: "scratchpads/",
+                        meta: "Session scratchpads",
+                      },
+                      {
+                        name: "legacy-session-histories/",
+                        meta: "Archived front-session exports",
+                      },
+                      {
+                        name: "tool-results/",
+                        meta: "Preview spillover artifacts",
+                      },
+                    ],
                   },
                   {
                     name: "input-attachments/",
@@ -98,14 +115,46 @@ Workspaces live under the runtime OS root. In desktop mode that root comes from 
                     ],
                   },
                   {
-                    name: "pi-agent/",
-                    meta: "Pi harness config",
+                    name: "memory/",
+                    meta: "Workspace-scoped markdown memory",
                     children: [
-                      { name: "auth.json", meta: "Harness auth state" },
-                      { name: "models.json", meta: "Harness model config" },
+                      { name: "MEMORY.md", meta: "Workspace memory index" },
+                      {
+                        name: "runtime/",
+                        meta: "Resume-only continuity",
+                        children: [
+                          { name: "latest-turn.md", meta: "Last-turn projection" },
+                          {
+                            name: "session-state/",
+                            meta: "Session state projections",
+                          },
+                          {
+                            name: "session-memory/",
+                            meta: "Resume-friendly snapshots",
+                          },
+                          {
+                            name: "recent-turns/",
+                            meta: "Recent turn snapshots",
+                          },
+                          { name: "blockers/", meta: "Operational blockers" },
+                          {
+                            name: "permission-blockers/",
+                            meta: "Permission-gated blockers",
+                          },
+                        ],
+                      },
+                      {
+                        name: "knowledge/",
+                        meta: "Durable recalled memory",
+                        children: [
+                          { name: "facts/", meta: "Stable workspace facts" },
+                          { name: "procedures/", meta: "Reusable workflows" },
+                          { name: "blockers/", meta: "Longer-lived blockers" },
+                          { name: "reference/", meta: "Reference material" },
+                        ],
+                      },
                     ],
                   },
-                  { name: "pi-sessions/...", meta: "Persisted Pi session state" },
                 ],
               },
             ],
@@ -117,53 +166,6 @@ Workspaces live under the runtime OS root. In desktop mode that root comes from 
         accent: "context",
         children: [
           { name: "MEMORY.md", meta: "Memory system root" },
-          {
-            name: "workspace/",
-            meta: "Workspace-scoped memory",
-            children: [
-              {
-                name: "<workspace-id>/",
-                accent: "context",
-                children: [
-                  { name: "MEMORY.md", meta: "Workspace memory index" },
-                  {
-                    name: "runtime/",
-                    meta: "Resume-only continuity",
-                    children: [
-                      { name: "latest-turn.md", meta: "Last-turn projection" },
-                      {
-                        name: "session-state/",
-                        meta: "Session state projections",
-                      },
-                      {
-                        name: "session-memory/",
-                        meta: "Resume-friendly snapshots",
-                      },
-                      {
-                        name: "recent-turns/",
-                        meta: "Recent turn snapshots",
-                      },
-                      { name: "blockers/", meta: "Operational blockers" },
-                      {
-                        name: "permission-blockers/",
-                        meta: "Permission-gated blockers",
-                      },
-                    ],
-                  },
-                  {
-                    name: "knowledge/",
-                    meta: "Durable recalled memory",
-                    children: [
-                      { name: "facts/", meta: "Stable workspace facts" },
-                      { name: "procedures/", meta: "Reusable workflows" },
-                      { name: "blockers/", meta: "Longer-lived blockers" },
-                      { name: "reference/", meta: "Reference material" },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
           {
             name: "preference/",
             meta: "Durable user preferences",
@@ -260,17 +262,31 @@ If you are changing app behavior, continue into [App Anatomy](/docs/build/apps/a
 
 ### `.holaboss/`
 
-`<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
+`<workspace-id>/.holaboss/` now holds the workspace bundle's runtime-owned surfaces:
 
-`workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.
+- `.holaboss/state/`
+  - workspace identity marker, persisted harness-session mapping, shared workspace SQLite, MCP sidecar state, todos, scratchpads, and archived session exports
+- `.holaboss/memory/`
+  - workspace-scoped runtime projections plus durable workspace knowledge
+- `.holaboss/input-attachments/`
+  - staged attachment batches referenced by in-flight runs
 
 ### `state/runtime.db`
 
-`state/runtime.db` is the durable runtime registry for workspaces, onboarding status/session state, sessions, bindings, queue state, turn results, request snapshots, durable memory catalog metadata, integration connections, integration bindings, output folders, app port allocation, runtime notifications, task proposals, evolve skill candidates, and memory update proposals. The `workspace_id` file exists mainly as an on-disk identity marker for workspace discovery and migration.
+`state/runtime.db` is the durable runtime registry for workspaces, onboarding status/session state, sessions, bindings, queue state, turn results, request snapshots, durable memory catalog metadata, integration connections, integration bindings, output folders, app port allocation, runtime notifications, task proposals, evolve skill candidates, and memory update proposals. The workspace identity file now lives at `<workspace-id>/.holaboss/state/workspace_id` as the on-disk marker for workspace discovery and migration.
 
 ### `memory/`
 
-`memory/` is OS-global, not part of a single workspace directory. It holds the markdown memory surfaces used by the runtime memory service.
+`memory/` is still OS-global, but it is now profile-global rather than workspace-global. It holds:
+
+- `MEMORY.md`
+  - the global memory index
+- `preference/`
+  - durable user preference memory
+- `identity/`
+  - durable user identity memory
+
+Workspace-scoped markdown memory now lives inside each workspace at `<workspace-id>/.holaboss/memory/`.
 
 ## What the runtime compiles per run
 

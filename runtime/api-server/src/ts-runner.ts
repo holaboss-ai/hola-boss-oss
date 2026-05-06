@@ -64,6 +64,10 @@ import {
   workspaceDirForId,
 } from "./ts-runner-session-state.js";
 import {
+  migrateLegacyWorkspaceStatePath,
+  workspaceStateRelativePath,
+} from "./workspace-bundle-paths.js";
+import {
   prepareInstructionWithQuotedWorkspaceSkills,
   resolveWorkspaceSkills,
 } from "./workspace-skills.js";
@@ -890,12 +894,12 @@ async function loadLegacySessionHistoryContext(params: {
   workspaceDir: string;
   logger?: LoggerLike;
 }): Promise<AgentLegacySessionHistoryContext | null> {
-  const manifestPath = path.join(
-    params.workspaceDir,
-    ".holaboss",
-    "legacy-session-histories",
-    "index.json",
-  );
+  const legacySessionHistoryDir = migrateLegacyWorkspaceStatePath({
+    workspaceDir: params.workspaceDir,
+    relativeSegments: ["legacy-session-histories"],
+    legacyRelativeSegments: [".holaboss", "legacy-session-histories"],
+  });
+  const manifestPath = path.join(legacySessionHistoryDir, "index.json");
   try {
     const raw = await fs.promises.readFile(manifestPath, "utf8");
     const parsed = JSON.parse(raw);
@@ -940,7 +944,7 @@ async function loadLegacySessionHistoryContext(params: {
         workspaceRelativePath({
           workspaceDir: params.workspaceDir,
           filePath: manifestPath,
-        }) ?? ".holaboss/legacy-session-histories/index.json",
+        }) ?? workspaceStateRelativePath("legacy-session-histories", "index.json"),
       legacy_session_count: entries.length,
       entries: entries.slice(0, 25),
     };

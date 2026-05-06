@@ -36,7 +36,7 @@ If the runtime needs durable state that is not just a file in the workspace, it 
 The store also resolves workspace paths from:
 
 - the workspace registry row
-- the workspace identity file under `.holaboss/workspace_id`
+- the workspace identity file under `.holaboss/state/workspace_id`
 - fallback discovery under the runtime workspace root
 
 That means the runtime uses both the database and filesystem markers to keep workspace discovery stable.
@@ -96,7 +96,8 @@ The package also loads `sqlite-vec` when available so memory recall can use vect
 
 Important distinction:
 
-- the markdown memory documents still live on disk under `memory/`
+- workspace-scoped markdown memory lives on disk under each workspace's `.holaboss/memory/`
+- profile-global markdown memory still lives under `memory/preference/`, `memory/identity/`, and the root `MEMORY.md`
 - the runtime-state-store keeps the searchable registry and embedding index around those documents
 
 ### Workspace-visible product state
@@ -171,8 +172,9 @@ The runtime currently uses:
 
 - `runtime.db` for registry, queue, and durable runtime metadata
 - workspace files for authored config and app/template state
-- `memory/` markdown files for durable memory content
-- `.holaboss/` under each workspace for workspace-local runtime state such as the identity marker and harness session mapping
+- `.holaboss/memory/` under each workspace for workspace-scoped markdown memory
+- global `memory/` for profile-global memory
+- `.holaboss/state/` under each workspace for workspace-local runtime state such as the identity marker and harness session mapping
 
 That split is deliberate. The database tracks runtime truth around the workspace; it does not become the workspace.
 

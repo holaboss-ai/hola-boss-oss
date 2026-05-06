@@ -2,15 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const MAIN_PATH = new URL("./main.ts", import.meta.url);
+const WORKSPACES_METHODS_PATH = new URL(
+  "../../sdk/runtime-client/src/methods/workspaces.ts",
+  import.meta.url,
+);
 
 test("workspace activation opts runtime ensure-running into transient retry handling", async () => {
-  const source = await readFile(MAIN_PATH, "utf8");
+  const source = await readFile(WORKSPACES_METHODS_PATH, "utf8");
 
-  assert.match(source, /retryTransientErrors\?: boolean;/);
-  assert.match(source, /const attempts = method === "GET" \|\| retryTransientErrors \? 3 : 1;/);
   assert.match(
     source,
-    /await requestRuntimeJson<Record<string, unknown>>\(\{\s*method: "POST",\s*path: "\/api\/v1\/apps\/ensure-running",[\s\S]*retryTransientErrors: true,/,
+    /ensureAppsRunning\(workspaceId\) \{\s*return request<Record<string, unknown>>\(\{\s*method: "POST",\s*path: "\/api\/v1\/apps\/ensure-running",\s*payload: \{ workspace_id: workspaceId \},\s*timeoutMs: 300000,\s*retryTransientErrors: true,\s*\}\);?\s*\}/,
   );
 });

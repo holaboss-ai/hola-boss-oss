@@ -76,7 +76,14 @@ By default, the runtime owns this directory shape under `HB_SANDBOX_ROOT`:
 ```text
 $HB_SANDBOX_ROOT/
   workspace/
+    <workspace-id>/
+      .holaboss/
+        memory/
+        state/
   memory/
+    MEMORY.md
+    preference/
+    identity/
   state/
     runtime.db
     runtime-config.json
@@ -88,7 +95,7 @@ $HB_SANDBOX_ROOT/
 
 | Variable | Why you set it |
 | --- | --- |
-| `HB_SANDBOX_ROOT` | Choose where the runtime keeps workspace, memory, and state data |
+| `HB_SANDBOX_ROOT` | Choose where the runtime keeps workspace bundles, profile-global memory, and runtime state |
 | `HOLABOSS_RUNTIME_CONFIG_PATH` | Override the default `state/runtime-config.json` location |
 | `SANDBOX_AGENT_BIND_HOST` | Bind the runtime to a specific host |
 | `SANDBOX_AGENT_BIND_PORT` | Bind the runtime to a specific port |
@@ -204,7 +211,7 @@ Independent deploy does not change the runtime contract:
 - workspace layout is still the same
 - `AGENTS.md` is still the instruction surface
 - `state/runtime.db` is still the durable runtime registry
-- `memory/` is still the durable memory store
+- `memory/` still holds the profile-global memory surfaces, while workspace-scoped memory lives under each workspace's `.holaboss/memory/`
 - app manifests still drive app lifecycle
 
 The main difference is deployment responsibility. Instead of being launched by the desktop app, the runtime is started directly on the machine that will host workspaces.

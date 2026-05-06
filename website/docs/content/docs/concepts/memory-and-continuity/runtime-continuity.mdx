@@ -21,9 +21,9 @@ The most important continuity artifacts are:
   - the runtime split between cacheable and volatile prompt sections for a run
 - capability manifest
   - the reduced visible and callable surface passed to the harness for that run
-- runtime projections under `memory/workspace/<workspace-id>/runtime/`
+- runtime projections under `<workspace-id>/.holaboss/memory/runtime/`
   - latest-turn summaries, session snapshots, blocker snapshots, recent-turn history, and permission-blocker artifacts
-- session-memory snapshots under `memory/workspace/<workspace-id>/runtime/session-memory/`
+- session-memory snapshots under `<workspace-id>/.holaboss/memory/runtime/session-memory/`
   - compact continuity views used to restore the next run without replaying the full transcript
 - user-memory proposals in `state/runtime.db`
   - staged strong-signal user-memory candidates that the current run can use ephemerally before acceptance
@@ -34,7 +34,7 @@ The continuity path after a run is:
 
 1. The runtime persists `turn_results`.
 2. An immediate continuity writeback runs in the same post-turn flow.
-3. That writeback refreshes runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+3. That writeback refreshes runtime projections under `.holaboss/memory/runtime/`, including `session-memory/`.
 4. The same flow then queues a background evolve job for heavier durable-memory and skill-review work.
 
 The point of this split is to keep the next run cheap to restore without waiting for heavier background extraction.
@@ -65,9 +65,9 @@ Use these rules of thumb when reasoning about resume state:
 
 - `state/runtime.db`
   - execution truth, session continuity, canonical runtime profile, user-memory proposals, and memory catalog metadata
-- `memory/workspace/<workspace-id>/runtime/`
+- `<workspace-id>/.holaboss/memory/runtime/`
   - volatile runtime projections for inspection and debugging
-- `memory/workspace/<workspace-id>/runtime/session-memory/`
+- `<workspace-id>/.holaboss/memory/runtime/session-memory/`
   - session-scoped continuity snapshots used during resume restoration
 
 At restore time, the runtime uses persisted harness session state plus the latest `session-memory` excerpt if it exists. It no longer restores from a separate compaction-boundary artifact. If a piece of information is only needed to resume the latest session, it belongs in runtime continuity rather than durable memory. Repeated blockers can begin in runtime projections first and only later be promoted into durable `knowledge/blockers/` during queued evolve.

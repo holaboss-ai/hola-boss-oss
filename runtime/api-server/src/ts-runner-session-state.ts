@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import {
+  migrateLegacyWorkspaceStatePath,
+} from "./workspace-bundle-paths.js";
 
 const WORKSPACE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const SESSION_STATE_DIR_NAME = ".holaboss";
 const SESSION_STATE_FILE_NAME = "harness-session-state.json";
 const SESSION_STATE_VERSION = 2;
 const SESSION_STATE_SESSION_KEY = "session_id";
@@ -45,7 +47,11 @@ export function workspaceDirForId(workspaceId: string): string {
 }
 
 export function workspaceSessionStatePath(workspaceDir: string): string {
-  return path.join(path.resolve(workspaceDir), SESSION_STATE_DIR_NAME, SESSION_STATE_FILE_NAME);
+  return migrateLegacyWorkspaceStatePath({
+    workspaceDir,
+    relativeSegments: [SESSION_STATE_FILE_NAME],
+    legacyRelativeSegments: [".holaboss", SESSION_STATE_FILE_NAME],
+  });
 }
 
 /** Filesystem path of the workspace's shared data SQLite. Single file
@@ -53,7 +59,11 @@ export function workspaceSessionStatePath(workspaceDir: string): string {
  *  (twitter_posts, linkedin_posts, …). The path is injected into app
  *  processes via the WORKSPACE_DB_PATH env var. */
 export function workspaceDataDbPath(workspaceDir: string): string {
-  return path.join(path.resolve(workspaceDir), SESSION_STATE_DIR_NAME, "data.db");
+  return migrateLegacyWorkspaceStatePath({
+    workspaceDir,
+    relativeSegments: ["data.db"],
+    legacyRelativeSegments: [".holaboss", "data.db"],
+  });
 }
 
 /** Ensure the workspace's shared data SQLite exists, with WAL enabled

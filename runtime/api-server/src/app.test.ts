@@ -392,14 +392,14 @@ test("browser capability preview mode spills screenshot data and trims browser_g
     );
     assert.match(
       String(body.screenshot.file_path ?? ""),
-      /^\.holaboss\/tool-results\/browser_get_state\/session-main\//,
+      /^\.holaboss\/state\/tool-results\/browser_get_state\/session-main\//,
     );
     assert.equal(body._preview.mode, "preview");
     assert.equal(body._preview.truncated, true);
     assert.equal(body._preview.spilled, true);
     assert.match(
       String(body.full_state_path ?? ""),
-      /^\.holaboss\/tool-results\/browser_get_state\/session-main\//,
+      /^\.holaboss\/state\/tool-results\/browser_get_state\/session-main\//,
     );
     assert.equal(
       fs.existsSync(
@@ -1383,7 +1383,7 @@ test("runtime todo tools read, write, and block session todo state", async () =>
     assert.equal(status.statusCode, 200);
     assert.equal(status.json().blocked, true);
 
-    const todoPath = path.join(workspaceRoot, "workspace-1", ".holaboss", "todos", "session-main.json");
+  const todoPath = path.join(workspaceRoot, "workspace-1", ".holaboss", "state", "todos", "session-main.json");
     const persisted = JSON.parse(fs.readFileSync(todoPath, "utf8"));
     assert.equal(persisted.phases[0]?.tasks[0]?.status, "blocked");
     assert.equal(persisted.phases[0]?.tasks[1]?.status, "pending");
@@ -1414,6 +1414,7 @@ test("runtime scratchpad preview mode clips oversized inline content", async () 
   const scratchpadPath = path.join(
     workspaceDir,
     ".holaboss",
+    "state",
     "scratchpads",
     "session-main.md",
   );
@@ -1436,7 +1437,7 @@ test("runtime scratchpad preview mode clips oversized inline content", async () 
     assert.equal(typeof body.content, "string");
     assert.equal(body.content_truncated, true);
     assert.equal(String(body.content_preview ?? "").includes("[truncated]"), true);
-    assert.equal(body.source_file_path, ".holaboss/scratchpads/session-main.md");
+    assert.equal(body.source_file_path, ".holaboss/state/scratchpads/session-main.md");
     assert.equal(body._preview.mode, "preview");
     assert.equal(body._preview.truncated, true);
   } finally {
@@ -1799,7 +1800,7 @@ test("runtime terminal read preview mode clips large event streams and spills fu
     assert.equal(body._preview.spilled, true);
     assert.match(
       String(body.full_events_path ?? ""),
-      /^\.holaboss\/tool-results\/terminal_session_read\/session-main\//,
+      /^\.holaboss\/state\/tool-results\/terminal_session_read\/session-main\//,
     );
     assert.equal(
       fs.existsSync(
@@ -2928,6 +2929,7 @@ test("ensure-main-session binds one desktop main session and exports legacy fron
   const legacyDir = path.join(
     store.workspaceDir(workspace.id),
     ".holaboss",
+    "state",
     "legacy-session-histories",
   );
   const manifestPath = path.join(legacyDir, "index.json");
@@ -3292,7 +3294,7 @@ test("POST /api/v1/workspaces accepts an explicit workspace_path", async () => {
   assert.equal(created.statusCode, 200);
   const payload = created.json().workspace as { id: string; workspace_path: string | null };
   assert.equal(payload.workspace_path && path.resolve(payload.workspace_path), path.resolve(customPath));
-  assert.equal(fs.existsSync(path.join(customPath, ".holaboss", "workspace_id")), true);
+  assert.equal(fs.existsSync(path.join(customPath, ".holaboss", "state", "workspace_id")), true);
   assert.equal(
     path.resolve(store.workspaceDir(payload.id)),
     path.resolve(customPath)
@@ -3638,9 +3640,9 @@ test("runtime states and history endpoints read TS state store", async () => {
   });
   const sessionMemoryPath = path.join(
     store.workspaceRoot,
-    "memory",
-    "workspace",
     workspace.id,
+    ".holaboss",
+    "memory",
     "runtime",
     "session-memory",
     "session-main.md",

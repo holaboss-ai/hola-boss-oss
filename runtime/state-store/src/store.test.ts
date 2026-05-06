@@ -36,7 +36,7 @@ test("workspace registry round trip uses hidden identity file", () => {
     status: "active"
   });
 
-  const identityPath = path.join(workspaceRoot, "workspace-1", ".holaboss", "workspace_id");
+  const identityPath = path.join(workspaceRoot, "workspace-1", ".holaboss", "state", "workspace_id");
   assert.equal(fs.readFileSync(identityPath, "utf-8").trim(), "workspace-1");
   assert.equal(created.id, "workspace-1");
   assert.deepEqual(store.getWorkspace("workspace-1"), created);
@@ -77,7 +77,7 @@ test("createWorkspace honors explicit workspacePath and registers it", () => {
 
   assert.equal(created.id, "ws-custom");
   assert.equal(fs.existsSync(customPath), true);
-  const identityPath = path.join(customPath, ".holaboss", "workspace_id");
+  const identityPath = path.join(customPath, ".holaboss", "state", "workspace_id");
   assert.equal(fs.readFileSync(identityPath, "utf-8").trim(), "ws-custom");
   assert.equal(path.resolve(store.workspaceDir("ws-custom")), path.resolve(customPath));
   // Default workspaceRoot was not touched.
@@ -307,7 +307,7 @@ test("relocateWorkspace accepts an empty directory and re-registers", () => {
   assert.equal(updated.id, "ws-r");
   assert.equal(path.resolve(store.workspaceDir("ws-r")), path.resolve(newPath));
   const identity = fs
-    .readFileSync(path.join(newPath, ".holaboss", "workspace_id"), "utf-8")
+    .readFileSync(path.join(newPath, ".holaboss", "state", "workspace_id"), "utf-8")
     .trim();
   assert.equal(identity, "ws-r");
   store.close();
@@ -434,7 +434,7 @@ test("runtime schema migrates workspace rows to registry and identity file", () 
   const rows = store.listWorkspaces();
 
   assert.deepEqual(rows.map((record) => record.id), ["workspace-legacy"]);
-  const identityPath = path.join(workspaceRoot, "workspace-legacy", ".holaboss", "workspace_id");
+  const identityPath = path.join(workspaceRoot, "workspace-legacy", ".holaboss", "state", "workspace_id");
   assert.equal(fs.readFileSync(identityPath, "utf-8").trim(), "workspace-legacy");
 
   const dbAfter = new Database(dbPath, { readonly: true });

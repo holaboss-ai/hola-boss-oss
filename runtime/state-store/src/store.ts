@@ -13,6 +13,7 @@ import {
 
 const RUNTIME_DB_PATH_ENV = "HOLABOSS_RUNTIME_DB_PATH";
 const WORKSPACE_RUNTIME_DIRNAME = ".holaboss";
+const WORKSPACE_STATE_DIRNAME = "state";
 const WORKSPACE_IDENTITY_FILENAME = "workspace_id";
 const LEGACY_WORKSPACE_METADATA_FILENAME = "workspace.json";
 
@@ -850,6 +851,36 @@ export function runtimeDbPath(options: RuntimeStateStoreOptions = {}): string {
   return path.join(sandboxRoot, "state", "runtime.db");
 }
 
+function workspaceRuntimeDir(workspacePath: string): string {
+  return path.join(workspacePath, WORKSPACE_RUNTIME_DIRNAME);
+}
+
+function workspaceStateDir(workspacePath: string): string {
+  return path.join(workspaceRuntimeDir(workspacePath), WORKSPACE_STATE_DIRNAME);
+}
+
+function currentWorkspaceIdentityPath(workspacePath: string): string {
+  return path.join(workspaceStateDir(workspacePath), WORKSPACE_IDENTITY_FILENAME);
+}
+
+function legacyWorkspaceIdentityPath(workspacePath: string): string {
+  return path.join(workspaceRuntimeDir(workspacePath), WORKSPACE_IDENTITY_FILENAME);
+}
+
+function ensureWorkspaceIdentityMigrated(workspacePath: string): string {
+  const currentPath = currentWorkspaceIdentityPath(workspacePath);
+  if (fs.existsSync(currentPath)) {
+    return currentPath;
+  }
+  const legacyPath = legacyWorkspaceIdentityPath(workspacePath);
+  if (fs.existsSync(legacyPath)) {
+    fs.mkdirSync(path.dirname(currentPath), { recursive: true });
+    fs.renameSync(legacyPath, currentPath);
+    return currentPath;
+  }
+  return currentPath;
+}
+
 export class RuntimeStateStore {
   readonly dbPath: string;
   readonly workspaceRoot: string;
@@ -898,7 +929,7 @@ export class RuntimeStateStore {
   }
 
   workspaceIdentityPath(workspaceId: string): string {
-    return path.join(this.workspaceDir(workspaceId), WORKSPACE_RUNTIME_DIRNAME, WORKSPACE_IDENTITY_FILENAME);
+    return ensureWorkspaceIdentityMigrated(this.workspaceDir(workspaceId));
   }
 
   /**
@@ -7988,9 +8019,8 @@ export class RuntimeStateStore {
   }
 
   private writeWorkspaceIdentityFile(workspacePath: string, workspaceId: string): void {
-    const runtimeDir = path.join(workspacePath, WORKSPACE_RUNTIME_DIRNAME);
-    fs.mkdirSync(runtimeDir, { recursive: true });
-    const identityPath = path.join(runtimeDir, WORKSPACE_IDENTITY_FILENAME);
+    const identityPath = currentWorkspaceIdentityPath(workspacePath);
+    fs.mkdirSync(path.dirname(identityPath), { recursive: true });
     const tempPath = `${identityPath}.tmp`;
     fs.writeFileSync(tempPath, `${workspaceId}\n`, "utf-8");
     fs.renameSync(tempPath, identityPath);
@@ -8006,13 +8036,15 @@ export class RuntimeStateStore {
       if (!fs.statSync(childPath).isDirectory()) {
         continue;
       }
-      const identityPath = path.join(childPath, WORKSPACE_RUNTIME_DIRNAME, WORKSPACE_IDENTITY_FILENAME);
-      if (!fs.existsSync(identityPath) || !fs.statSync(identityPath).isFile()) {
+      const identityPath = ensureWorkspaceIdentityMigrated(childPath);
+      const legacyPath = legacyWorkspaceIdentityPath(childPath);
+      const candidatePath = fs.existsSync(identityPath) ? identityPath : legacyPath;
+      if (!fs.existsSync(candidatePath) || !fs.statSync(candidatePath).isFile()) {
         continue;
       }
 
       try {
-        const raw = fs.readFileSync(identityPath, "utf-8").trim();
+        const raw = fs.readFileSync(candidatePath, "utf-8").trim();
         if (raw === workspaceId) {
           return childPath;
         }

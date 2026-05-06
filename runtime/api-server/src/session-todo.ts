@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  migrateLegacyWorkspaceStatePath,
+  workspaceStateRelativePath,
+} from "./workspace-bundle-paths.js";
 
-const SESSION_TODO_DIR_SEGMENTS = [".holaboss", "todos"] as const;
+const SESSION_TODO_DIR_SEGMENTS = ["todos"] as const;
+const LEGACY_SESSION_TODO_DIR_SEGMENTS = [".holaboss", "todos"] as const;
 const LEGACY_PI_TODO_DIR_SEGMENTS = [".holaboss", "pi-agent", "todos"] as const;
 const SESSION_TODO_STATE_VERSION = 2;
 
@@ -47,8 +52,8 @@ export interface SessionTodoState {
 type TodoPathResolution = {
   relativePath: string;
   absolutePath: string;
-  legacyRelativePath: string;
-  legacyAbsolutePath: string;
+  legacyRelativePaths: string[];
+  legacyAbsolutePaths: string[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -80,13 +85,29 @@ function todoPaths(params: {
   sessionId: string;
 }): TodoPathResolution {
   const fileName = `${sanitizeSessionTodoSegment(params.sessionId)}.json`;
-  const relativePath = path.posix.join(...SESSION_TODO_DIR_SEGMENTS, fileName);
-  const legacyRelativePath = path.posix.join(...LEGACY_PI_TODO_DIR_SEGMENTS, fileName);
+  const workspaceDir = path.join(params.workspaceRoot, params.workspaceId);
+  const relativePath = workspaceStateRelativePath(...SESSION_TODO_DIR_SEGMENTS, fileName);
+  const legacyRelativePaths = [
+    path.posix.join(...LEGACY_SESSION_TODO_DIR_SEGMENTS, fileName),
+    path.posix.join(...LEGACY_PI_TODO_DIR_SEGMENTS, fileName),
+  ];
+  let absolutePath = migrateLegacyWorkspaceStatePath({
+    workspaceDir,
+    relativeSegments: [...SESSION_TODO_DIR_SEGMENTS, fileName],
+    legacyRelativeSegments: [...LEGACY_SESSION_TODO_DIR_SEGMENTS, fileName],
+  });
+  absolutePath = migrateLegacyWorkspaceStatePath({
+    workspaceDir,
+    relativeSegments: [...SESSION_TODO_DIR_SEGMENTS, fileName],
+    legacyRelativeSegments: [...LEGACY_PI_TODO_DIR_SEGMENTS, fileName],
+  });
   return {
     relativePath,
-    absolutePath: path.join(params.workspaceRoot, params.workspaceId, relativePath),
-    legacyRelativePath,
-    legacyAbsolutePath: path.join(params.workspaceRoot, params.workspaceId, legacyRelativePath),
+    absolutePath,
+    legacyRelativePaths,
+    legacyAbsolutePaths: legacyRelativePaths.map((legacyRelativePath) =>
+      path.join(workspaceDir, legacyRelativePath),
+    ),
   };
 }
 
@@ -263,11 +284,13 @@ async function readExistingStateText(paths: TodoPathResolution): Promise<string 
       throw error;
     }
   }
-  try {
-    return await fs.readFile(paths.legacyAbsolutePath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
+  for (const legacyAbsolutePath of paths.legacyAbsolutePaths) {
+    try {
+      return await fs.readFile(legacyAbsolutePath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
     }
   }
   return null;
@@ -355,7 +378,9 @@ async function writeSessionTodoState(params: {
   const tempPath = `${paths.absolutePath}.tmp`;
   await fs.writeFile(tempPath, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
   await fs.rename(tempPath, paths.absolutePath);
-  await fs.rm(paths.legacyAbsolutePath, { force: true }).catch(() => {});
+  for (const legacyAbsolutePath of paths.legacyAbsolutePaths) {
+    await fs.rm(legacyAbsolutePath, { force: true }).catch(() => {});
+  }
   return nextState;
 }
 

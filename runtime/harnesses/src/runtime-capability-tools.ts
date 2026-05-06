@@ -681,7 +681,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
           name: {
             type: "string",
             description:
-              "SQL-safe table name to create inside the shared workspace DB at `.holaboss/data.db`.",
+              "SQL-safe table name to create inside the shared workspace DB at `.holaboss/state/data.db`.",
           },
           columns: {
             type: "array",
@@ -752,7 +752,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
                 query: {
                   type: "string",
                   description:
-                    "Read-only SQL against the shared workspace DB at `.holaboss/data.db`. For kpi, prefer aliasing the answer as `value`.",
+                    "Read-only SQL against the shared workspace DB at `.holaboss/state/data.db`. For kpi, prefer aliasing the answer as `value`.",
                 },
                 views: {
                   type: "array",
