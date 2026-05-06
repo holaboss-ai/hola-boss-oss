@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, test } from "node:test";
 
 import { runWorkspaceMcpSidecarCli, startWorkspaceMcpSidecar } from "./workspace-mcp-sidecar.js";
+import { workspaceStateDir } from "./workspace-bundle-paths.js";
 
 const tempDirs: string[] = [];
 
@@ -87,10 +88,10 @@ test("startWorkspaceMcpSidecar reuses a ready persisted sidecar", async () => {
 test("startWorkspaceMcpSidecar terminates stale state, spawns, and persists the new sidecar", async () => {
   const { root, workspaceDir } = makeTempWorkspaceRoot("hb-workspace-mcp-spawn-");
   const request = makeRequest(workspaceDir);
-  const stateDir = path.join(root, ".holaboss");
-  fs.mkdirSync(stateDir, { recursive: true });
+  const legacyStateDir = path.join(root, ".holaboss");
+  fs.mkdirSync(legacyStateDir, { recursive: true });
   fs.writeFileSync(
-    path.join(stateDir, "workspace-mcp-sidecar-state.json"),
+    path.join(legacyStateDir, "workspace-mcp-sidecar-state.json"),
     JSON.stringify(
       {
         version: 1,
@@ -168,6 +169,7 @@ test("startWorkspaceMcpSidecar terminates stale state, spawns, and persists the 
   assert.equal(capturedSpawnCall.options.detached, true);
   assert.equal(Array.isArray(capturedSpawnCall.options.stdio), true);
 
+  const stateDir = workspaceStateDir(workspaceDir);
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, "workspace-mcp-sidecar-state.json"), "utf8"));
   assert.deepEqual(state, {
     version: 1,
@@ -183,6 +185,7 @@ test("startWorkspaceMcpSidecar terminates stale state, spawns, and persists the 
   });
   assert.equal(fs.readFileSync(path.join(stateDir, "workspace-local.workspace-mcp-sidecar.stdout.log"), "utf8"), "");
   assert.equal(fs.readFileSync(path.join(stateDir, "workspace-local.workspace-mcp-sidecar.stderr.log"), "utf8"), "");
+  assert.equal(fs.existsSync(path.join(legacyStateDir, "workspace-mcp-sidecar-state.json")), false);
 });
 
 test("startWorkspaceMcpSidecar terminates a spawned sidecar if readiness never succeeds", async () => {
@@ -212,7 +215,7 @@ test("startWorkspaceMcpSidecar terminates a spawned sidecar if readiness never s
   );
 
   assert.deepEqual(terminated, [5555]);
-  const statePath = path.join(root, ".holaboss", "workspace-mcp-sidecar-state.json");
+  const statePath = path.join(workspaceStateDir(workspaceDir), "workspace-mcp-sidecar-state.json");
   assert.equal(fs.existsSync(statePath), false);
 });
 

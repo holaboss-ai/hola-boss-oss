@@ -85,6 +85,8 @@ test("filesystem memory service preserves search/get/upsert/status/sync payload 
     workspace_id: "workspace-1",
     path: "MEMORY.md"
   });
+  const captured = await service.capture({ workspace_id: "workspace-1" });
+  const capturedFiles = captured.files as Record<string, string>;
 
   assert.equal(Array.isArray(searched.results), true);
   assert.equal((searched.results as Array<Record<string, unknown>>).length >= 1, true);
@@ -109,6 +111,9 @@ test("filesystem memory service preserves search/get/upsert/status/sync payload 
     path: "MEMORY.md",
     text: "# Memory Index\n"
   });
+  assert.equal(capturedFiles["workspace/workspace-1/notes.md"], "# Notes\ncoffee preference\nsecond line\n");
+  assert.equal(capturedFiles["workspace/workspace-1/new.md"], "hello");
+  assert.equal(capturedFiles["MEMORY.md"], "# Memory Index\n");
   assert.equal(status.backend, "builtin");
   assert.equal(
     fs.existsSync(path.join(workspaceMemoryDir(path.join(workspaceRoot, "workspace-1")), "notes.md")),

@@ -257,14 +257,7 @@ function resolveMemoryBackend(): ResolvedMemoryBackend {
 }
 
 function workspaceMemoryFiles(workspaceMemoryRootDir: string): string[] {
-  const files: string[] = [];
-  const rootEntrypoint = path.join(workspaceMemoryRootDir, "MEMORY.md");
-  if (fs.existsSync(rootEntrypoint) && fs.statSync(rootEntrypoint).isFile()) {
-    files.push(rootEntrypoint);
-  }
-  files.push(...listMarkdownFiles(path.join(workspaceMemoryRootDir, "runtime")));
-  files.push(...listMarkdownFiles(path.join(workspaceMemoryRootDir, "knowledge")));
-  return files;
+  return listMarkdownFiles(workspaceMemoryRootDir);
 }
 
 function globalMemoryFiles(globalMemoryRootDir: string): string[] {
