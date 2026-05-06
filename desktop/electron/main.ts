@@ -4172,26 +4172,15 @@ function enrichDesktopSentryEvent(
     delete event.request.headers["x-api-key"];
   }
 
-  // Lightweight tags always — these are cheap and helpful even for
-  // info/warn-level events the console-logging integration funnels in.
   event.tags = {
     ...(event.tags ?? {}),
     desktop_launch_id: DESKTOP_LAUNCH_ID,
     process_kind: "electron_main",
   };
 
-  // Everything below — sqlite reads, three file attachments, four count
-  // queries on the diagnostics database, plus full event-log / session-state
-  // dumps — only earns its keep when an actual error or fatal event is
-  // about to ship to Sentry. With `enableLogs: true` and the console
-  // integration in the same `Sentry.init`, every console.info /
-  // console.warn / console.error becomes a Sentry event and would
-  // otherwise re-run this whole diagnostics pipeline. A 114s `--cpu-prof`
-  // attributed 261 ms of self-time to a single
-  // `readPersistedRuntimeProcessState` prepare hit from here, plus 234 ms
-  // in `getAppMemory` from `@sentry/electron`'s electron-context
-  // integration which fires alongside us on every event. Gate by level so
-  // the hot path is just tag-set + secret-strip.
+  // Skip the heavy diagnostics path (sqlite reads, file attachments, event-log
+  // dumps) for non-error events — `enableLogs: true` funnels every console.*
+  // call through here.
   const level = event.level;
   const isErrorish =
     level === "fatal" ||
@@ -4256,18 +4245,7 @@ function openRuntimeDatabase() {
   return database;
 }
 
-/**
- * Module-scoped sqlite handles + prepared statements registered through this
- * helper survive across calls so a hot helper (e.g. `getWorkspaceRecord`,
- * `appendRuntimeEventLog`) doesn't pay a fresh `new Database` + `prepare`
- * cycle on every IPC hit. The closer-the-hot-path-the-bigger-the-savings:
- * a 114s --cpu-prof showed `prepare` self-time of 261 ms in
- * `readPersistedRuntimeProcessState` from the Sentry context path alone.
- *
- * Lifetime: the registered disposer fires from `ensureAppQuitCleanup`.
- * On runtime errors the caller drops its own cache via the supplied
- * `invalidate()` so a transient sqlite hiccup doesn't poison the singleton.
- */
+// Cached sqlite handle + statement, disposed via `ensureAppQuitCleanup`.
 type CachedRuntimeStatement = {
   get: () => Database.Statement;
   invalidate: () => void;
@@ -4280,7 +4258,7 @@ function cacheRuntimeStatement(sql: string): CachedRuntimeStatement {
     try {
       database?.close();
     } catch {
-      // ignore close errors during teardown
+      // ignore
     }
     database = null;
     statement = null;
@@ -15532,18 +15510,13 @@ async function ensureAppQuitCleanup(): Promise<void> {
       })
       .finally(() => {
         appQuitCleanupPromise = null;
-        // Release the long-lived sqlite handle held by
-        // `persistRuntimeProcessState`. Best-effort — the next launch
-        // re-opens fresh.
         try {
           cachedRuntimeProcessStateDatabase?.close();
         } catch {
-          // ignore close errors during teardown
+          // ignore
         }
         cachedRuntimeProcessStateDatabase = null;
         cachedRuntimeProcessStateStatement = null;
-        // Release every long-lived sqlite handle/statement registered via
-        // `cacheRuntimeStatement`. Best-effort — the next launch re-opens.
         for (const dispose of cachedRuntimeStatementDisposers) {
           try {
             dispose();
@@ -19415,16 +19388,9 @@ async function setActiveBrowserWorkspace(
         SESSION_BROWSER_BUSY_CHECK_MS,
       );
     }
-    // The renderer calls `browser.setActiveWorkspace(null)` from
-    // workspaceSelection.tsx whenever the selected workspace clears —
-    // typically when entering Workspace Control Center. Without this
-    // updateAttachedBrowserView call the BrowserView from the
-    // previously-active workspace stays parented to mainWindow with its
-    // last-known bounds, painting on top of the multi-workspace overview
-    // (the symptom is e.g. an `about.google` cookie banner stuck across
-    // every chat pane). The hot-path detach goes through `setBounds(0,0)`
-    // on BrowserPane unmount, but that's only reliable when BrowserPane
-    // was actually mounted in the workspace we're leaving.
+    // Detach the previous workspace's BrowserView when the active workspace
+    // clears (e.g. entering Workspace Control Center) — otherwise it keeps
+    // painting over the new view at its old bounds.
     updateAttachedBrowserView();
     emitBrowserState();
     emitBookmarksState();

@@ -857,12 +857,6 @@ export class RuntimeStateStore {
   readonly #onMigrationEvent: ((event: MigrationLogEvent) => void) | undefined;
   #db: Database.Database | null = null;
   #vectorIndexSupported = false;
-  // Memoizes prepared statements so hot helpers (e.g. `listTurnResults`,
-  // `listClaimedInputs`, `listExpiredClaimedPostRunJobs`) don't recompile
-  // the same SQL on every call. Keyed by the literal SQL string — dynamic
-  // helpers that vary the SQL by which optional filters are present still
-  // win because there are usually only a handful of distinct shapes.
-  // Cleared whenever the underlying connection is replaced or closed.
   #statementCache: Map<string, Database.Statement> = new Map();
 
   constructor(options: RuntimeStateStoreOptions = {}) {
@@ -879,13 +873,6 @@ export class RuntimeStateStore {
     this.#vectorIndexSupported = false;
   }
 
-  /**
-   * Returns a cached prepared statement for `sql`, compiling it on first hit.
-   * Use for hot helpers that reissue the same SQL string repeatedly. Callers
-   * with a small set of dynamic shapes (filter combinations) get one cached
-   * statement per shape, which is still a large win over recompiling on
-   * every call.
-   */
   #cachedPrepare(sql: string): Database.Statement {
     let statement = this.#statementCache.get(sql);
     if (!statement) {
@@ -3438,9 +3425,6 @@ export class RuntimeStateStore {
       .filter((row): row is SessionInputRecord => row !== null);
   }
 
-  // Polled by the queue worker on every wake-up to recover stale claims.
-  // Keep the prepared statement around so a busy queue doesn't recompile
-  // this every iteration.
   static readonly #LIST_CLAIMED_INPUTS_SQL = `
     SELECT *
     FROM agent_session_inputs
@@ -3659,8 +3643,6 @@ export class RuntimeStateStore {
     return records;
   }
 
-  // Polled per cron tick. Cache the compiled statement so the wake loop
-  // doesn't pay a fresh `prepare` round on every iteration.
   static readonly #LIST_EXPIRED_CLAIMED_POST_RUN_JOBS_SQL = `
     SELECT *
     FROM post_run_jobs
@@ -4404,9 +4386,6 @@ export class RuntimeStateStore {
       LIMIT ? OFFSET ?
     `;
     values.push(params.limit ?? 100, params.offset ?? 0);
-    // Hot path: callers like the per-session "lastTurnResult" lookup fire
-    // this once per session in a list endpoint. Caching the prepared
-    // statement turns N session list rows into 1 compile + N runs.
     const rows = this.#cachedPrepare(query).all(...values) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToTurnResult(row));
   }
