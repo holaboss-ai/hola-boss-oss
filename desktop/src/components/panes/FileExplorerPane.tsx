@@ -3246,24 +3246,11 @@ export function FileExplorerPane({
       }
 
       const primaryModifier = event.metaKey || event.ctrlKey;
-      if (!primaryModifier) {
+      if (!primaryModifier || event.altKey) {
         return;
       }
 
       const normalizedKey = event.key.trim().toLowerCase();
-      if (event.shiftKey && !event.altKey && normalizedKey === "r") {
-        if (!selectedEntry) {
-          return;
-        }
-        event.preventDefault();
-        void revealEntryInFolder(selectedEntry);
-        return;
-      }
-
-      if (event.altKey) {
-        return;
-      }
-
       if (normalizedKey === "c") {
         if (!selectedEntry) {
           return;
@@ -3304,7 +3291,6 @@ export function FileExplorerPane({
     creationTargetDirectoryPath,
     pasteExplorerClipboardIntoDirectory,
     renamingPath,
-    revealEntryInFolder,
     selectedEntry,
   ]);
 
@@ -4311,8 +4297,6 @@ export function FileExplorerPane({
       : desktopPlatform === "win32"
         ? "Show in Explorer"
         : "Show in File Manager";
-  const revealShortcutHint =
-    desktopPlatform === "darwin" ? "⇧⌘R" : "Ctrl+Shift+R";
 
   return (
     <>
@@ -4431,12 +4415,9 @@ export function FileExplorerPane({
                 onClick={() => {
                   void revealEntryFromContextMenu(contextMenu.entry);
                 }}
-                className="w-full justify-start gap-3 font-normal"
+                className="w-full justify-start font-normal"
               >
-                <span className="flex-1 text-left">{revealInFolderLabel}</span>
-                <span className="text-[11px] text-muted-foreground">
-                  {revealShortcutHint}
-                </span>
+                {revealInFolderLabel}
               </Button>
               <Button
                 type="button"
