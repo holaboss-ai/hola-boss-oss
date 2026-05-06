@@ -188,7 +188,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
                 use_user_browser_surface: {
                   type: "boolean",
                   description:
-                    "Set true only when the user explicitly asked the delegated browser work to use their current/shared browser tab, page, or browser surface. Omit otherwise so the task uses the agent browser.",
+                    "Set true only when the user explicitly says `use my browser`. Omit otherwise so the task uses the agent browser.",
                 },
                 timeout_ms: {
                   type: "integer",
@@ -212,7 +212,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
           use_user_browser_surface: {
             type: "boolean",
             description:
-              "Singleton alias: set true only when the user explicitly asked the delegated browser work to use their current/shared browser tab, page, or browser surface.",
+              "Singleton alias: set true only when the user explicitly says `use my browser`.",
           },
           timeout_ms: {
             type: "integer",
@@ -557,6 +557,28 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["op"],
         additionalProperties: false,
       };
+    case "holaboss_update_workspace_instructions":
+      return {
+        type: "object",
+        properties: {
+          op: literalStringUnion(
+            ["read_current", "append_rule", "remove_rule", "replace_managed_section"],
+            "Workspace-instruction update operation.",
+          ),
+          rule: {
+            type: "string",
+            description:
+              "Rule text for `append_rule` or `remove_rule`. Use concise one-line durable rules here.",
+          },
+          content: {
+            type: "string",
+            description:
+              "Managed-section markdown content for `replace_managed_section`. Use this for structured rule sets, multi-line templates, or code fences.",
+          },
+        },
+        required: ["op"],
+        additionalProperties: false,
+      };
     case "terminal_sessions_list":
       return { type: "object", properties: {}, additionalProperties: false };
     case "terminal_session_start":
@@ -788,6 +810,14 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "If required facts remain unverified after search, escalate to browser tools or another more direct capability.",
     ];
   }
+  if (toolId === "holaboss_update_workspace_instructions") {
+    return [
+      "Use `holaboss_update_workspace_instructions` when the user gives durable workspace-wide rules, recurring output templates, or lasting instruction-following constraints that should persist in root `AGENTS.md`.",
+      "Use `read_current` before replacing the managed section when you need to preserve or refine existing workspace instructions.",
+      "Use `append_rule` for concise durable rules, `remove_rule` to retract one, and `replace_managed_section` for structured markdown templates or larger rule sets.",
+      "Do not use this tool for one-off instructions that are clearly scoped only to the current deliverable or turn.",
+    ];
+  }
   if (toolId === "skill") {
     return [
       "Use `skill` when a workspace or embedded skill is relevant and you need its canonical guidance block.",
@@ -800,7 +830,8 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `holaboss_delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
       "Keep each delegated task narrowly scoped and self-contained. Use the canonical `tasks` array for batched delegation and the singleton top-level fields only for one task.",
       "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
-      "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly asks to use their current tab, current page, shared browser, or equivalent user-owned browser context.",
+      "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly says `use my browser`.",
+      "Do not infer user-browser intent from `current tab`, `current page`, `this page`, generic browser requests, or operator-surface context alone.",
       "Delegate execution-heavy work instead of narrating that you will do it later without actually spawning the background task.",
       "When the user asks for work that needs capability missing from the current main-session run, delegate it instead of replying that the current run lacks those tools.",
       "For latest-news, source discovery, and similar external research, usually delegate with `tools: [\"web\"]` and escalate to `browser` only when direct interaction or UI verification is needed.",

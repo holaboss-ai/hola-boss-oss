@@ -265,7 +265,7 @@ test("continueSubagent inherits the composer-selected thinking value for the eff
   }
 });
 
-test("delegateTask opts into the user browser surface only when explicitly requested", async () => {
+test("delegateTask only opts into the user browser surface when the parent input literally says use my browser", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-delegate-browser-"));
   const workspaceRoot = path.join(root, "workspace");
   const dbPath = path.join(root, "runtime.db");
@@ -286,27 +286,51 @@ test("delegateTask opts into the user browser surface only when explicitly reque
       kind: "workspace_session",
       createdBy: "workspace_user",
     });
-
-    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
-    const result = service.delegateTask({
+    const explicitParentInput = store.enqueueInput({
       workspaceId,
       sessionId: mainSessionId,
+      payload: {
+        text: "Use my browser to open Notion and stop there.",
+      },
+    });
+    const implicitParentInput = store.enqueueInput({
+      workspaceId,
+      sessionId: mainSessionId,
+      payload: {
+        text: "Open Notion in my current tab.",
+      },
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const explicitResult = service.delegateTask({
+      workspaceId,
+      sessionId: mainSessionId,
+      inputId: explicitParentInput.inputId,
       tasks: [
         {
           goal: "Open Notion and stop there.",
           useUserBrowserSurface: true,
         },
+      ],
+    }) as { tasks?: Array<Record<string, unknown>> };
+    const implicitResult = service.delegateTask({
+      workspaceId,
+      sessionId: mainSessionId,
+      inputId: implicitParentInput.inputId,
+      tasks: [
         {
-          goal: "Open Notion in a browser and stop there.",
+          goal: "Open Notion and stop there.",
+          useUserBrowserSurface: true,
         },
       ],
     }) as { tasks?: Array<Record<string, unknown>> };
 
-    const tasks = result.tasks ?? [];
-    assert.equal(tasks.length, 2);
-
-    const explicitInput = store.getInput(String(tasks[0]?.latest_child_input_id ?? ""));
-    const genericInput = store.getInput(String(tasks[1]?.latest_child_input_id ?? ""));
+    const explicitInput = store.getInput(
+      String(explicitResult.tasks?.[0]?.latest_child_input_id ?? ""),
+    );
+    const implicitInput = store.getInput(
+      String(implicitResult.tasks?.[0]?.latest_child_input_id ?? ""),
+    );
 
     assert.equal(
       (explicitInput?.payload.context as Record<string, unknown> | undefined)
@@ -315,7 +339,7 @@ test("delegateTask opts into the user browser surface only when explicitly reque
     );
     assert.equal(
       Object.prototype.hasOwnProperty.call(
-        (genericInput?.payload.context as Record<string, unknown> | undefined) ?? {},
+        (implicitInput?.payload.context as Record<string, unknown> | undefined) ?? {},
         "use_user_browser_surface",
       ),
       false,
@@ -1245,4 +1269,142 @@ test("createDashboard rejects an unsafe filename slug", async () => {
       return true;
     },
   );
+});
+
+test("updateWorkspaceInstructions appends a managed AGENTS.md rule without disturbing user-authored content", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-agents-append-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const workspaceDir = path.join(workspaceRoot, workspaceId);
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, "AGENTS.md"),
+      "# Workspace Rules\n\nUser-authored intro.\n",
+      "utf8",
+    );
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = await service.updateWorkspaceInstructions({
+      workspaceId,
+      op: "append_rule",
+      rule: "Always start with a short summary.",
+    }) as {
+      changed: boolean;
+      managed_rules: string[];
+      full_text: string;
+    };
+
+    assert.equal(result.changed, true);
+    assert.deepEqual(result.managed_rules, [
+      "Always start with a short summary.",
+    ]);
+    assert.match(result.full_text, /# Workspace Rules/);
+    assert.match(result.full_text, /User-authored intro\./);
+    assert.match(
+      result.full_text,
+      /<!-- holaboss-managed-workspace-instructions:start -->/,
+    );
+    assert.match(
+      result.full_text,
+      /- Always start with a short summary\./,
+    );
+
+    const duplicate = await service.updateWorkspaceInstructions({
+      workspaceId,
+      op: "append_rule",
+      rule: "Always start with a short summary.",
+    }) as {
+      changed: boolean;
+      managed_rules: string[];
+    };
+    assert.equal(duplicate.changed, false);
+    assert.deepEqual(duplicate.managed_rules, [
+      "Always start with a short summary.",
+    ]);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("updateWorkspaceInstructions replaces and clears the managed AGENTS.md section while preserving user-authored content", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-agents-replace-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const workspaceDir = path.join(workspaceRoot, workspaceId);
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, "AGENTS.md"),
+      "# Workspace Rules\n\nUser-authored intro.\n",
+      "utf8",
+    );
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const replaced = await service.updateWorkspaceInstructions({
+      workspaceId,
+      op: "replace_managed_section",
+      content: [
+        "### Reply Template",
+        "",
+        "1. Summary",
+        "2. Changes",
+        "3. Risks",
+      ].join("\n"),
+    }) as {
+      changed: boolean;
+      managed_section_present: boolean;
+      managed_section_content: string;
+      full_text: string;
+    };
+
+    assert.equal(replaced.changed, true);
+    assert.equal(replaced.managed_section_present, true);
+    assert.match(
+      replaced.managed_section_content,
+      /### Reply Template/,
+    );
+    assert.match(replaced.full_text, /User-authored intro\./);
+    assert.match(replaced.full_text, /1\. Summary/);
+
+    const cleared = await service.updateWorkspaceInstructions({
+      workspaceId,
+      op: "replace_managed_section",
+      content: "",
+    }) as {
+      changed: boolean;
+      managed_section_present: boolean;
+      full_text: string;
+    };
+
+    assert.equal(cleared.changed, true);
+    assert.equal(cleared.managed_section_present, false);
+    assert.match(cleared.full_text, /User-authored intro\./);
+    assert.doesNotMatch(
+      cleared.full_text,
+      /holaboss-managed-workspace-instructions/,
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });

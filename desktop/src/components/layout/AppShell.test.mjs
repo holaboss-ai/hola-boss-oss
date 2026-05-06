@@ -637,6 +637,19 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
   assert.doesNotMatch(source, /LeftNavigationRail/);
 });
 
+test("app shell auto-enters the sole workspace after startup hydration", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const singleWorkspaceStartupEntryHandledRef = useRef\(false\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*if \(singleWorkspaceStartupEntryHandledRef\.current\) \{\s*return;\s*\}\s*if \(!hasHydratedWorkspaceList\) \{\s*return;\s*\}\s*singleWorkspaceStartupEntryHandledRef\.current = true;\s*if \(activeShellView !== "control_center" \|\| workspaces\.length !== 1\) \{\s*return;\s*\}\s*handleEnterWorkspace\(workspaces\[0\]\?\.id \?\? ""\);\s*\}, \[\s*activeShellView,\s*handleEnterWorkspace,\s*hasHydratedWorkspaceList,\s*workspaces,\s*\]\);/,
+  );
+});
+
 test("app shell no longer renders the dedicated app mode after removing the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 

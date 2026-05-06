@@ -468,6 +468,37 @@ test("composeAgentPrompt can inject a run-specific routing recovery override for
   assert.match(prompt.systemPrompt, /produce the report artifact/i);
 });
 
+test("composeAgentPrompt instructs main sessions to persist durable workspace rules into AGENTS.md when the tool is available", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read"],
+    extraTools: ["holaboss_update_workspace_instructions"],
+    runtimeToolIds: ["holaboss_update_workspace_instructions"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read"],
+    extraTools: ["holaboss_update_workspace_instructions"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /persist them in root `AGENTS\.md` with `holaboss_update_workspace_instructions`/i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not update `AGENTS\.md` for instructions that are clearly one-off/i,
+  );
+});
+
 test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo tools are present", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],

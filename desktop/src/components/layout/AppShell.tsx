@@ -112,7 +112,7 @@ const SPACE_DISPLAY_MIN_WIDTH = 420;
 const SPACE_EXPLORER_RAIL_WIDTH = 52;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
 const APP_UPDATE_CHANGELOG_BASE_URL =
-  "https://github.com/holaboss-ai/holaOS/releases/tag";
+  "https://github.com/holaboss-ai/holaOS-releases/releases/tag";
 const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
 const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 
@@ -632,7 +632,7 @@ function appUpdateChangelogUrl(status: AppUpdateStatusPayload): string | null {
   if (!version) {
     return null;
   }
-  return `${APP_UPDATE_CHANGELOG_BASE_URL}/holaboss-${version}`;
+  return `${APP_UPDATE_CHANGELOG_BASE_URL}/holaOS-${version}`;
 }
 
 function buildTaskProposalToastNotification(params: {
@@ -1060,7 +1060,7 @@ function buildDevAppUpdatePreviewStatus(
     downloadProgressPercent: mode === "downloading" ? 64 : 100,
     currentVersion: currentVersion.trim() || "0.1.0",
     latestVersion,
-    releaseName: `Holaboss ${latestVersion}`,
+    releaseName: `holaOS ${latestVersion}`,
     publishedAt: now,
     dismissedVersion: null,
     lastCheckedAt: now,
@@ -1229,7 +1229,7 @@ function WorkspaceBootstrapPane() {
           />
           <img
             src={holabossLogoUrl}
-            alt="Holaboss"
+            alt="holaOS"
             width={56}
             height={56}
             draggable={false}
@@ -1240,7 +1240,7 @@ function WorkspaceBootstrapPane() {
           className="mt-6 text-[17px] font-semibold tracking-tight text-foreground"
           style={{ letterSpacing: "-0.01em" }}
         >
-          Holaboss
+          holaOS
         </h1>
         <p className="mt-1.5 text-[12.5px] font-medium text-muted-foreground">
           Preparing your desktop
@@ -1575,6 +1575,7 @@ function AppShellContent() {
   const knownTaskProposalIdsByWorkspaceRef = useRef<Record<string, string[]>>(
     {},
   );
+  const singleWorkspaceStartupEntryHandledRef = useRef(false);
   const lastRestorableSpaceFileDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceFileDisplayView>
   >({});
@@ -3636,6 +3637,27 @@ function AppShellContent() {
       setSelectedWorkspaceId,
     ],
   );
+
+  useEffect(() => {
+    if (singleWorkspaceStartupEntryHandledRef.current) {
+      return;
+    }
+    if (!hasHydratedWorkspaceList) {
+      return;
+    }
+
+    singleWorkspaceStartupEntryHandledRef.current = true;
+    if (activeShellView !== "control_center" || workspaces.length !== 1) {
+      return;
+    }
+
+    handleEnterWorkspace(workspaces[0]?.id ?? "");
+  }, [
+    activeShellView,
+    handleEnterWorkspace,
+    hasHydratedWorkspaceList,
+    workspaces,
+  ]);
 
   const handleChatComposerDraftTextChange = useCallback(
     (text: string) => {

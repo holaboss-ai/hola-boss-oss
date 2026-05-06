@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { app as electronApp } from "electron";
 
-electronApp.setName("Holaboss");
+electronApp.setName("holaOS");
 
 import * as Sentry from "@sentry/electron/main";
 
@@ -9,7 +9,16 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
   enableLogs: !!process.env.SENTRY_DSN,
-  attachScreenshot: !!process.env.SENTRY_DSN,
+  // attachScreenshot was the dominant idle-CPU culprit on desktop: when true,
+  // the @sentry/electron screenshots integration calls
+  // `BrowserWindow.capturePage()` + `toPNG()` inside `processEvent` for every
+  // non-transaction event the SDK ships — and `enableLogs` + the console
+  // logging integration below funnel info/warn/error console writes through
+  // that same path. CPU profile on a fresh idle launch attributed >70% of
+  // process time to a single `processEvent` frame in screenshots.js.
+  // If we ever want screenshots in crash reports, capture them manually
+  // inside `beforeSend` and gate on `event.level === "fatal"`.
+  attachScreenshot: false,
   maxBreadcrumbs: 200,
   integrations: [
     Sentry.consoleLoggingIntegration({
@@ -49,6 +58,7 @@ import {
   shell,
   type IpcMainInvokeEvent,
   type OpenDialogOptions,
+  type SaveDialogOptions,
   type Session,
   type WebContents,
 } from "electron";
@@ -191,7 +201,7 @@ import {
   shouldTrackHistoryUrl as shouldTrackHistoryUrlUtil,
 } from "./browser-pane/utils.js";
 
-const APP_DISPLAY_NAME = "Holaboss";
+const APP_DISPLAY_NAME = "holaOS";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
@@ -249,7 +259,7 @@ const APP_THEMES = new Set([
 ]);
 const DEFAULT_APP_THEME = "amber-minimal-light";
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
-const GITHUB_RELEASES_REPO = "holaOS";
+const GITHUB_RELEASES_REPO = "holaOS-releases";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_SUPPORTED_PLATFORMS = new Set(["darwin", "win32"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
@@ -1750,7 +1760,7 @@ function isReleaseStyleAppVersion(version: string) {
 
 function currentDesktopReleaseTag() {
   const version = currentAppVersion();
-  return version ? `holaboss-desktop-${version}` : "";
+  return version ? `holaOS-${version}` : "";
 }
 
 function appUpdateSupported() {
@@ -4162,6 +4172,25 @@ function enrichDesktopSentryEvent(
     delete event.request.headers.cookie;
     delete event.request.headers["x-api-key"];
   }
+
+  event.tags = {
+    ...(event.tags ?? {}),
+    desktop_launch_id: DESKTOP_LAUNCH_ID,
+    process_kind: "electron_main",
+  };
+
+  // Skip the heavy diagnostics path (sqlite reads, file attachments, event-log
+  // dumps) for non-error events — `enableLogs: true` funnels every console.*
+  // call through here.
+  const level = event.level;
+  const isErrorish =
+    level === "fatal" ||
+    level === "error" ||
+    Boolean(event.exception?.values?.length);
+  if (!isErrorish) {
+    return event;
+  }
+
   const diagnostics = readDesktopRuntimeDiagnosticsSnapshot();
   const diagnosticsAttachment = {
     filename: "desktop-runtime-diagnostics.json",
@@ -4171,11 +4200,6 @@ function enrichDesktopSentryEvent(
   addSentryHintAttachment(hint, diagnosticsAttachment);
   addSentryHintAttachment(hint, runtimeLogTailAttachment());
   addSentryHintAttachment(hint, redactedRuntimeConfigAttachment());
-  event.tags = {
-    ...(event.tags ?? {}),
-    desktop_launch_id: DESKTOP_LAUNCH_ID,
-    process_kind: "electron_main",
-  };
   event.contexts = {
     ...(event.contexts ?? {}),
     desktop_process:
@@ -4220,6 +4244,39 @@ function openRuntimeDatabase() {
   database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   database.pragma("foreign_keys = ON");
   return database;
+}
+
+// Cached sqlite handle + statement, disposed via `ensureAppQuitCleanup`.
+type CachedRuntimeStatement = {
+  get: () => Database.Statement;
+  invalidate: () => void;
+};
+const cachedRuntimeStatementDisposers: Array<() => void> = [];
+function cacheRuntimeStatement(sql: string): CachedRuntimeStatement {
+  let database: Database.Database | null = null;
+  let statement: Database.Statement | null = null;
+  const disposer = () => {
+    try {
+      database?.close();
+    } catch {
+      // ignore
+    }
+    database = null;
+    statement = null;
+  };
+  cachedRuntimeStatementDisposers.push(disposer);
+  return {
+    get() {
+      if (!database) {
+        database = openRuntimeDatabase();
+      }
+      if (!statement) {
+        statement = database.prepare(sql);
+      }
+      return statement;
+    },
+    invalidate: disposer,
+  };
 }
 
 function migrateLocalWorkspacesTable(database: Database.Database) {
@@ -4590,6 +4647,21 @@ async function bootstrapRuntimeDatabase() {
   }
 }
 
+// `persistRuntimeProcessState` is invoked from ~13 sites and fires every
+// time the embedded runtime transitions between starting/healthy/stopped/
+// error. Each call previously opened a fresh sqlite handle, recompiled
+// this 50-line INSERT+UPSERT, ran it, and closed the handle. The `prepare`
+// step alone showed up at 261+254+39 ≈ 554 ms self in a 114s --cpu-prof
+// trace; the surrounding `Database` constructor and `close` added ~180 ms
+// more. Cache one open handle + one prepared statement at module scope so
+// each call collapses to a single `.run({...})` after the first hit.
+//
+// Lifetime: the cached handle is closed in the existing app-quit handler
+// alongside other runtime cleanup (see `releaseCachedRuntimeDatabase`
+// below) so we don't strand a sqlite reader across an Electron relaunch.
+let cachedRuntimeProcessStateDatabase: Database.Database | null = null;
+let cachedRuntimeProcessStateStatement: Database.Statement | null = null;
+
 function persistRuntimeProcessState(update: {
   pid?: number | null;
   status: string;
@@ -4598,72 +4670,85 @@ function persistRuntimeProcessState(update: {
   lastHealthyAt?: string | null;
   lastError?: string | null;
 }) {
-  const database = openRuntimeDatabase();
+  if (!cachedRuntimeProcessStateDatabase) {
+    cachedRuntimeProcessStateDatabase = openRuntimeDatabase();
+  }
+  if (!cachedRuntimeProcessStateStatement) {
+    cachedRuntimeProcessStateStatement = cachedRuntimeProcessStateDatabase.prepare(
+      `
+      INSERT INTO runtime_process_state (
+        process_key,
+        pid,
+        status,
+        bind_host,
+        bind_port,
+        base_url,
+        launch_id,
+        sandbox_root,
+        last_started_at,
+        last_stopped_at,
+        last_healthy_at,
+        last_error,
+        updated_at
+      ) VALUES (
+        @process_key,
+        @pid,
+        @status,
+        @bind_host,
+        @bind_port,
+        @base_url,
+        @launch_id,
+        @sandbox_root,
+        @last_started_at,
+        @last_stopped_at,
+        @last_healthy_at,
+        @last_error,
+        @updated_at
+      )
+      ON CONFLICT(process_key) DO UPDATE SET
+        pid = excluded.pid,
+        status = excluded.status,
+        bind_host = excluded.bind_host,
+        bind_port = excluded.bind_port,
+        base_url = excluded.base_url,
+        launch_id = excluded.launch_id,
+        sandbox_root = excluded.sandbox_root,
+        last_started_at = COALESCE(excluded.last_started_at, runtime_process_state.last_started_at),
+        last_stopped_at = COALESCE(excluded.last_stopped_at, runtime_process_state.last_stopped_at),
+        last_healthy_at = COALESCE(excluded.last_healthy_at, runtime_process_state.last_healthy_at),
+        last_error = excluded.last_error,
+        updated_at = excluded.updated_at
+    `,
+    );
+  }
   try {
-    database
-      .prepare(
-        `
-        INSERT INTO runtime_process_state (
-          process_key,
-          pid,
-          status,
-          bind_host,
-          bind_port,
-          base_url,
-          launch_id,
-          sandbox_root,
-          last_started_at,
-          last_stopped_at,
-          last_healthy_at,
-          last_error,
-          updated_at
-        ) VALUES (
-          @process_key,
-          @pid,
-          @status,
-          @bind_host,
-          @bind_port,
-          @base_url,
-          @launch_id,
-          @sandbox_root,
-          @last_started_at,
-          @last_stopped_at,
-          @last_healthy_at,
-          @last_error,
-          @updated_at
-        )
-        ON CONFLICT(process_key) DO UPDATE SET
-          pid = excluded.pid,
-          status = excluded.status,
-          bind_host = excluded.bind_host,
-          bind_port = excluded.bind_port,
-          base_url = excluded.base_url,
-          launch_id = excluded.launch_id,
-          sandbox_root = excluded.sandbox_root,
-          last_started_at = COALESCE(excluded.last_started_at, runtime_process_state.last_started_at),
-          last_stopped_at = COALESCE(excluded.last_stopped_at, runtime_process_state.last_stopped_at),
-          last_healthy_at = COALESCE(excluded.last_healthy_at, runtime_process_state.last_healthy_at),
-          last_error = excluded.last_error,
-          updated_at = excluded.updated_at
-      `,
-        )
-      .run({
-        process_key: "embedded-runtime",
-        pid: update.pid ?? null,
-        status: update.status,
-        bind_host: "127.0.0.1",
-        bind_port: runtimeApiPort(),
-        base_url: runtimeBaseUrl(),
-        launch_id: DESKTOP_LAUNCH_ID,
-        sandbox_root: runtimeSandboxRoot(),
-        last_started_at: update.lastStartedAt ?? null,
-        last_stopped_at: update.lastStoppedAt ?? null,
-        last_healthy_at: update.lastHealthyAt ?? null,
-        last_error: update.lastError ?? null,
-        updated_at: utcNowIso(),
-      });
-  } finally {
-    database.close();
+    cachedRuntimeProcessStateStatement.run({
+      process_key: "embedded-runtime",
+      pid: update.pid ?? null,
+      status: update.status,
+      bind_host: "127.0.0.1",
+      bind_port: runtimeApiPort(),
+      base_url: runtimeBaseUrl(),
+      launch_id: DESKTOP_LAUNCH_ID,
+      sandbox_root: runtimeSandboxRoot(),
+      last_started_at: update.lastStartedAt ?? null,
+      last_stopped_at: update.lastStoppedAt ?? null,
+      last_healthy_at: update.lastHealthyAt ?? null,
+      last_error: update.lastError ?? null,
+      updated_at: utcNowIso(),
+    });
+  } catch (error) {
+    // Drop the cached handle on failure so the next call retries cleanly
+    // instead of reusing a wedged statement (e.g. after a schema migration
+    // or accidental DB delete during dev).
+    try {
+      cachedRuntimeProcessStateDatabase?.close();
+    } catch {
+      // ignore close errors on the failure path
+    }
+    cachedRuntimeProcessStateDatabase = null;
+    cachedRuntimeProcessStateStatement = null;
+    throw error;
   }
 }
 
@@ -4682,69 +4767,71 @@ type PersistedRuntimeProcessStateRecord = {
   updatedAt: string;
 };
 
+const readPersistedRuntimeProcessStateStatement = cacheRuntimeStatement(`
+  SELECT
+    pid,
+    status,
+    bind_host,
+    bind_port,
+    base_url,
+    launch_id,
+    sandbox_root,
+    last_started_at,
+    last_stopped_at,
+    last_healthy_at,
+    last_error,
+    updated_at
+  FROM runtime_process_state
+  WHERE process_key = ?
+  LIMIT 1
+`);
+
 function readPersistedRuntimeProcessState(): PersistedRuntimeProcessStateRecord | null {
-  const database = openRuntimeDatabase();
+  let row:
+    | {
+        pid: number | null;
+        status: string;
+        bind_host: string | null;
+        bind_port: number | null;
+        base_url: string | null;
+        launch_id: string | null;
+        sandbox_root: string | null;
+        last_started_at: string | null;
+        last_stopped_at: string | null;
+        last_healthy_at: string | null;
+        last_error: string | null;
+        updated_at: string;
+      }
+    | undefined;
   try {
-    const row = database
-      .prepare(
-        `
-        SELECT
-          pid,
-          status,
-          bind_host,
-          bind_port,
-          base_url,
-          launch_id,
-          sandbox_root,
-          last_started_at,
-          last_stopped_at,
-          last_healthy_at,
-          last_error,
-          updated_at
-        FROM runtime_process_state
-        WHERE process_key = ?
-        LIMIT 1
-      `,
-      )
-      .get("embedded-runtime") as
-      | {
-          pid: number | null;
-          status: string;
-          bind_host: string | null;
-          bind_port: number | null;
-          base_url: string | null;
-          launch_id: string | null;
-          sandbox_root: string | null;
-          last_started_at: string | null;
-          last_stopped_at: string | null;
-          last_healthy_at: string | null;
-          last_error: string | null;
-          updated_at: string;
-        }
-      | undefined;
-    if (!row) {
-      return null;
-    }
-    return {
-      pid: typeof row.pid === "number" ? row.pid : null,
-      status: row.status,
-      bindHost: row.bind_host,
-      bindPort: typeof row.bind_port === "number" ? row.bind_port : null,
-      baseUrl: row.base_url,
-      launchId: row.launch_id,
-      sandboxRoot: row.sandbox_root,
-      lastStartedAt: row.last_started_at,
-      lastStoppedAt: row.last_stopped_at,
-      lastHealthyAt: row.last_healthy_at,
-      lastError: row.last_error,
-      updatedAt: row.updated_at,
-    };
+    row = readPersistedRuntimeProcessStateStatement.get().get("embedded-runtime") as typeof row;
   } catch {
+    readPersistedRuntimeProcessStateStatement.invalidate();
     return null;
-  } finally {
-    database.close();
   }
+  if (!row) {
+    return null;
+  }
+  return {
+    pid: typeof row.pid === "number" ? row.pid : null,
+    status: row.status,
+    bindHost: row.bind_host,
+    bindPort: typeof row.bind_port === "number" ? row.bind_port : null,
+    baseUrl: row.base_url,
+    launchId: row.launch_id,
+    sandboxRoot: row.sandbox_root,
+    lastStartedAt: row.last_started_at,
+    lastStoppedAt: row.last_stopped_at,
+    lastHealthyAt: row.last_healthy_at,
+    lastError: row.last_error,
+    updatedAt: row.updated_at,
+  };
 }
+
+const appendRuntimeEventLogStatement = cacheRuntimeStatement(`
+  INSERT INTO event_log (category, event, outcome, detail, created_at)
+  VALUES (?, ?, ?, ?, ?)
+`);
 
 function appendRuntimeEventLog(event: {
   category: string;
@@ -4766,24 +4853,17 @@ function appendRuntimeEventLog(event: {
       detail: event.detail ?? null,
     },
   });
-  const database = openRuntimeDatabase();
   try {
-    database
-      .prepare(
-        `
-        INSERT INTO event_log (category, event, outcome, detail, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `,
-      )
-      .run(
-        event.category,
-        event.event,
-        event.outcome,
-        event.detail ?? null,
-        utcNowIso(),
-      );
-  } finally {
-    database.close();
+    appendRuntimeEventLogStatement.get().run(
+      event.category,
+      event.event,
+      event.outcome,
+      event.detail ?? null,
+      utcNowIso(),
+    );
+  } catch (error) {
+    appendRuntimeEventLogStatement.invalidate();
+    throw error;
   }
 }
 
@@ -12655,37 +12735,37 @@ function updateQueuedInputStatus(inputId: string, status: string) {
   }
 }
 
+const getWorkspaceRecordStatement = cacheRuntimeStatement(`
+  SELECT
+    id,
+    name,
+    status,
+    harness,
+    error_message,
+    onboarding_status,
+    onboarding_session_id,
+    onboarding_completed_at,
+    onboarding_completion_summary,
+    onboarding_requested_at,
+    onboarding_requested_by,
+    created_at,
+    updated_at,
+    deleted_at_utc
+  FROM workspaces
+  WHERE id = @id
+`);
+
 function getWorkspaceRecord(
   workspaceId: string,
 ): WorkspaceRecordPayload | null {
-  const database = openRuntimeDatabase();
   try {
-    const row = database
-      .prepare(
-        `
-        SELECT
-          id,
-          name,
-          status,
-          harness,
-          error_message,
-          onboarding_status,
-          onboarding_session_id,
-          onboarding_completed_at,
-          onboarding_completion_summary,
-          onboarding_requested_at,
-          onboarding_requested_by,
-          created_at,
-          updated_at,
-          deleted_at_utc
-        FROM workspaces
-        WHERE id = @id
-      `,
-      )
-      .get({ id: workspaceId }) as WorkspaceRecordPayload | undefined;
+    const row = getWorkspaceRecordStatement.get().get({ id: workspaceId }) as
+      | WorkspaceRecordPayload
+      | undefined;
     return row ?? null;
-  } finally {
-    database.close();
+  } catch {
+    getWorkspaceRecordStatement.invalidate();
+    return null;
   }
 }
 
@@ -15431,6 +15511,20 @@ async function ensureAppQuitCleanup(): Promise<void> {
       })
       .finally(() => {
         appQuitCleanupPromise = null;
+        try {
+          cachedRuntimeProcessStateDatabase?.close();
+        } catch {
+          // ignore
+        }
+        cachedRuntimeProcessStateDatabase = null;
+        cachedRuntimeProcessStateStatement = null;
+        for (const dispose of cachedRuntimeStatementDisposers) {
+          try {
+            dispose();
+          } catch {
+            // ignore
+          }
+        }
       });
   }
   await appQuitCleanupPromise;
@@ -18266,6 +18360,61 @@ async function deleteExplorerPath(
   return { deleted: true };
 }
 
+async function revealExplorerPath(
+  targetPath: string,
+  workspaceId?: string | null,
+): Promise<{ revealed: boolean }> {
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+  if (!(await fileExists(absolutePath))) {
+    throw new Error("Target path no longer exists.");
+  }
+  shell.showItemInFolder(absolutePath);
+  return { revealed: true };
+}
+
+async function exportExplorerPathToFile(
+  targetPath: string,
+  workspaceId: string | null | undefined,
+  payload?: { content?: string; suggestedName?: string },
+): Promise<{ path: string | null; canceled: boolean }> {
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+  const stat = await fs.stat(absolutePath);
+  if (!stat.isFile()) {
+    throw new Error("Only files can be exported.");
+  }
+
+  const sourceBaseName = path.basename(absolutePath);
+  const suggestedName = payload?.suggestedName?.trim() || sourceBaseName;
+  const downloadsDir = app.getPath("downloads");
+  const ownerWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? null;
+  const options: SaveDialogOptions = {
+    title: "Export file",
+    defaultPath: path.join(downloadsDir, suggestedName),
+    buttonLabel: "Export",
+  };
+  const result = ownerWindow
+    ? await dialog.showSaveDialog(ownerWindow, options)
+    : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) {
+    return { path: null, canceled: true };
+  }
+
+  const destination = path.resolve(result.filePath);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  if (typeof payload?.content === "string") {
+    await fs.writeFile(destination, payload.content, "utf-8");
+  } else {
+    await fs.copyFile(absolutePath, destination);
+  }
+  return { path: destination, canceled: false };
+}
+
 async function listDirectory(
   targetPath?: string | null,
   workspaceId?: string | null,
@@ -19295,6 +19444,10 @@ async function setActiveBrowserWorkspace(
         SESSION_BROWSER_BUSY_CHECK_MS,
       );
     }
+    // Detach the previous workspace's BrowserView when the active workspace
+    // clears (e.g. entering Workspace Control Center) — otherwise it keeps
+    // painting over the new view at its old bounds.
+    updateAttachedBrowserView();
     emitBrowserState();
     emitBookmarksState();
     emitDownloadsState();
@@ -20318,6 +20471,22 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, targetPath: string, workspaceId?: string | null) =>
       deleteExplorerPath(targetPath, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:revealInFolder",
+    ["main"],
+    async (_event, targetPath: string, workspaceId?: string | null) =>
+      revealExplorerPath(targetPath, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:exportFileTo",
+    ["main"],
+    async (
+      _event,
+      targetPath: string,
+      workspaceId?: string | null,
+      payload?: { content?: string; suggestedName?: string },
+    ) => exportExplorerPathToFile(targetPath, workspaceId, payload),
   );
   handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
   handleTrustedIpc(

@@ -202,6 +202,11 @@ function hasScratchpadTools(request: ComposeBaseAgentPromptRequest): boolean {
   return available.has("holaboss_scratchpad_read") || available.has("holaboss_scratchpad_write");
 }
 
+function hasWorkspaceInstructionUpdateTool(request: ComposeBaseAgentPromptRequest): boolean {
+  const available = collectAvailableToolNames(request);
+  return available.has("holaboss_update_workspace_instructions");
+}
+
 function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): string {
   const lines = ["Session policy:"];
   const normalizedMode = nonEmptyText(request.sessionMode).toLowerCase();
@@ -677,6 +682,12 @@ export function buildBaseAgentPromptSections(
     "Put always-on workspace rules in `AGENTS.md`; use skills for reusable workflows that load when relevant.",
     "Create or update a workspace-local skill for reusable workflows; do not use skills for unconditional policy or one-off state."
   ];
+  if (hasWorkspaceInstructionUpdateTool(request)) {
+    executionLines.push(
+      "When the user gives durable workspace-wide rules, recurring output templates, or lasting instruction-following constraints that should apply in future work, persist them in root `AGENTS.md` with `holaboss_update_workspace_instructions` instead of relying only on transient context.",
+      "Do not update `AGENTS.md` for instructions that are clearly one-off and scoped only to the current deliverable."
+    );
+  }
   if (capabilityManifest?.browser_tools.length) {
     executionLines.push(
       "When browser tools are available, use them for UI-specific verification and prefer DOM-grounded actions and extraction; use screenshots only when visual confirmation matters."
@@ -921,6 +932,12 @@ export function buildMainSessionPromptSections(
     "Put always-on workspace rules in `AGENTS.md`; use skills for reusable workflows that load when relevant.",
     "Create or update a workspace-local skill for reusable workflows; do not use skills for unconditional policy or one-off state."
   ];
+  if (hasWorkspaceInstructionUpdateTool(request)) {
+    conversationLines.push(
+      "When the user gives durable workspace-wide rules, recurring output templates, or lasting instruction-following constraints that should apply in future work, persist them in root `AGENTS.md` with `holaboss_update_workspace_instructions` instead of relying only on transient context.",
+      "Do not update `AGENTS.md` for instructions that are clearly one-off and scoped only to the current deliverable."
+    );
+  }
   if (normalizedSessionKind === "onboarding") {
     conversationLines.splice(4, 0,
       "Keep onboarding work in this session. Do not delegate onboarding progress or setup confirmation work to hidden subagents.",
@@ -931,7 +948,7 @@ export function buildMainSessionPromptSections(
       "Treat the surfaced tool and capability set for this run as your full direct authority. Hidden subagents may have a broader executor surface than you do.",
       "Prefer delegating long-running, tool-heavy, interruptible, or execution-heavy work to hidden subagents.",
       "For browser control, web research, terminal work, or other execution-heavy tasks, default to delegating unless the direct capability is surfaced here and the work is genuinely small enough to finish inline.",
-      "Default delegated browser work to the agent browser. When the user explicitly asks to use their current tab, current page, shared browser, or equivalent user-owned browser context, set `use_user_browser_surface: true` on `holaboss_delegate_task`.",
+      "Default delegated browser work to the agent browser. Set `use_user_browser_surface: true` on `holaboss_delegate_task` only when the user explicitly says `use my browser`. Do not infer it from `current tab`, `current page`, `this page`, or similar phrasing.",
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
       "Treat missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate, not as the final answer to the user.",
       "When the ideal direct tool or integration is missing, do not stop there; try another viable route with available tools, such as delegated browser inspection, web research, terminal/file inspection, or one precise question for missing access/context.",

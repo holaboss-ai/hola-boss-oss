@@ -4826,6 +4826,49 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/capabilities/runtime-tools/workspace-instructions", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId =
+        capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }) ?? "";
+      const result = await runtimeAgentToolsService.updateWorkspaceInstructions({
+        workspaceId,
+        op: requiredString(request.body.op, "op") as
+          | "read_current"
+          | "append_rule"
+          | "remove_rule"
+          | "replace_managed_section",
+        rule: hasOwn(request.body, "rule") ? nullableString(request.body.rule) : undefined,
+        content: hasOwn(request.body, "content") ? nullableString(request.body.content) : undefined,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "holaboss_update_workspace_instructions",
+        payload: result,
+        workspaceId,
+        sessionId,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(
+        reply,
+        400,
+        error instanceof Error ? error.message : "workspace instructions update failed",
+      );
+    }
+  });
+
   app.get("/api/v1/capabilities/runtime-tools/terminal-sessions", async (request, reply) => {
     try {
       return runtimeAgentToolsService.listTerminalSessions({

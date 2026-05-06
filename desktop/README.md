@@ -33,7 +33,6 @@ Built with Electron + React + TypeScript + Vite + Tailwind CSS.
 ```bash
 npm install
 cp .env.example .env
-GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime
 npm run dev
 ```
 
@@ -63,8 +62,8 @@ Before running `npm run dev`, copy `desktop/.env.example` to `desktop/.env` and 
 cp .env.example .env
 ```
 
-`prepare:runtime` downloads the latest release-bundled runtime for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
-Each staged runtime bundle is self-contained and now carries the runtime API, bundled Node/npm, and bundled Python.
+`npm run dev` stages a runtime bundle before Electron starts. In this repo it prefers a locally built runtime when the runtime packager scripts are available.
+Each staged runtime bundle is self-contained and carries the runtime API, bundled Node/npm, and bundled Python.
 
 ## Build
 
@@ -84,12 +83,12 @@ Packaged desktop builds expect a staged runtime bundle at `out/runtime-<platform
 npm run prepare:runtime
 ```
 
-That stages the bundle for the current host platform. If you need to target a specific platform explicitly:
+That stages the bundle for the current host platform from an explicit runtime source. If you need to target a specific platform explicitly:
 
 ```bash
-GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:macos
-GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:linux
-GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:windows
+npm run prepare:runtime:macos
+npm run prepare:runtime:linux
+npm run prepare:runtime:windows
 ```
 
 For local development against unreleased `holaOS` runtime changes:
@@ -107,17 +106,15 @@ After `npm run prepare:runtime:local`, a normal `npm run dev` uses that staged l
 Or package directly with local runtime in one step:
 
 ```bash
-npm run dist:mac:local
-npm run dist:win:local
+npm run dist:mac
+npm run dist:mac:dmg
+npm run dist:win
 ```
 
 The staging script accepts one of:
 - `HOLABOSS_RUNTIME_DIR=/absolute/path/to/runtime-<platform>`
 - `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-<platform>-<sha>.tar.gz`
 - `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-<platform>-<sha>.tar.gz`
-- `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest stable release asset from GitHub Releases
-- `HOLABOSS_RUNTIME_RELEASE_TAG=holaboss-desktop-YYYY.MDD.R` to fetch the runtime asset from a specific release tag instead of the latest stable release
-- `HOLABOSS_RUNTIME_SOURCE_REPO=owner/repo` to override the GitHub repository used for release asset lookup
 - `HOLABOSS_RUNTIME_PLATFORM=macos|linux|windows` to override the auto-detected target platform when needed
 
 Runtime packagers can also override the bundled Python source when needed:
@@ -126,33 +123,32 @@ Runtime packagers can also override the bundled Python source when needed:
 - `HOLABOSS_RUNTIME_PYTHON_URL=https://.../cpython-...tar.gz`
 - `HOLABOSS_RUNTIME_PYTHON_VERSION`, `HOLABOSS_RUNTIME_PYTHON_RELEASE`, `HOLABOSS_RUNTIME_PYTHON_VARIANT`, and `HOLABOSS_RUNTIME_PYTHON_TARGET_TRIPLE`
 
-If none are set, it falls back to the host temp directory, for example `${TMPDIR:-/tmp}/holaboss-runtime-<platform>-full`.
+If none are set, it falls back to the host temp directory, for example `${TMPDIR:-/tmp}/holaboss-runtime-<platform>-full`, or you can run `npm run prepare:runtime:local` first.
 
 To build a mac app bundle with the runtime embedded in Electron resources:
 
 ```bash
-GITHUB_TOKEN="$(gh auth token)" npm run dist:mac
+npm run dist:mac
 ```
 
-Use `dist:mac` when you want the latest released macOS runtime. Use `dist:mac:local` for local unreleased runtime code.
+Use `dist:mac` for the default local-runtime packaging flow. Use `prepare:runtime` with explicit runtime source env vars when you need to package against a prebuilt runtime bundle instead.
 
 This produces an unsigned local mac app bundle with `runtime-macos` embedded in `Contents/Resources/`.
 
 For Windows packaging:
 
 ```bash
-GITHUB_TOKEN="$(gh auth token)" npm run dist:win
-npm run dist:win:local
+npm run dist:win
 ```
 
-Use `dist:win` with a staged or downloaded `out/runtime-windows/` bundle. Use `dist:win:local` on a Windows host to build and stage a native local runtime bundle first, then produce a Windows NSIS installer.
+Use `dist:win` on a Windows host to build and stage a native local runtime bundle first, then produce a Windows NSIS installer.
 
-Both Windows packaging commands also write `out/holaboss-config.json` from your configured desktop environment before building the installer.
+The Windows packaging command also writes `out/holaboss-config.json` from your configured desktop environment before building the installer.
 
 This produces a Windows NSIS installer `.exe` in `out/release/`.
 
 Output:
-- [Holaboss Workspace.app](/Users/jeffrey/Desktop/holaOS/desktop/out/release/mac-arm64/Holaboss%20Workspace.app)
+- [holaOS.app](/Users/jeffrey/Desktop/holaOS/desktop/out/release/mac-arm64/holaOS.app)
 
 Run packaged app with endpoint presets:
 
@@ -190,7 +186,7 @@ The preset scripts no longer embed concrete URLs. Internal developers are expect
 To build a mac installer image:
 
 ```bash
-GITHUB_TOKEN="$(gh auth token)" npm run dist:mac:dmg
+npm run dist:mac:dmg
 ```
 
 This produces a local-use `.dmg` installer in `out/release/`.
@@ -207,15 +203,14 @@ Desktop validation and desktop release packaging now share the single `.github/w
 
 On pull requests and pushes to `main`, `CI` runs the normal validation jobs only. On manual dispatch, that same workflow:
 - checks out the requested `ref`
-- creates or updates the requested GitHub release tag
-- builds and uploads Linux, macOS, and Windows runtime tarballs as release assets
+- creates the requested GitHub release in `holaboss-ai/holaOS-releases`
 - builds the signed and notarized macOS app, then uploads the DMG, ZIP, blockmaps, and `latest-mac.yml`
 - builds the signed Windows NSIS installer, then uploads the installer, blockmaps, and `latest.yml`
 
 Release channel policy:
 - there are no standalone runtime-only GitHub releases anymore
-- runtime bundles are attached to the same desktop release tag as the installable macOS and Windows artifacts
-- desktop-shippable releases publish under `holaboss-desktop-YYYY.MDD.R`
+- desktop releases do not publish standalone runtime tarballs
+- desktop-shippable releases publish to `holaboss-ai/holaOS-releases`
 - the in-app desktop updater is still intended to track desktop releases, not arbitrary runtime assets
 
 Desktop release versioning:
@@ -223,7 +218,7 @@ Desktop release versioning:
 - `YYYY` = year, `MDD` = month without a leading zero plus a two-digit day, `R` = release number for that date
 - examples: `2026.410.1`, `2026.410.2`, `2026.1113.1`
 - do not zero-pad the month in the middle segment; `2026.0410.1` is not valid semver
-- desktop GitHub release tags must be `holaboss-desktop-YYYY.MDD.R`
+- desktop GitHub release tags must be `holaOS-YYYY.MDD.R`
 - the desktop packager derives the app update version from the trailing `X.Y.Z` suffix in `release_tag`, so tags should end with the same `YYYY.MDD.R` value
 - to print a version for today, run `npm --prefix desktop run release:version`
 - to print the full desktop release tag for today, run `npm --prefix desktop run release:tag`
@@ -239,24 +234,25 @@ The manual `CI` release path requires these repository secrets and fails fast wh
 - `APPLE_TEAM_ID`: Apple Developer Team ID
 - `WINDOWS_CERTIFICATE`: base64-encoded or file-backed Windows code-signing certificate
 - `WINDOWS_CERTIFICATE_PASSWORD`: password for the Windows certificate
+- `HOLABOSS_RELEASES_REPO_TOKEN`: token with read access to the private source repo and write access to `holaboss-ai/holaOS-releases`
 
 When manually triggering `CI`, provide:
 
 - `ref`: the branch, tag, or commit you want to ship
-- `release_tag`: the GitHub release tag to create or update, in `holaboss-desktop-YYYY.MDD.R` format
+- `release_tag`: the GitHub release tag to create or update, in `holaOS-YYYY.MDD.R` format
 - `release_title`: optional display title for the GitHub release
 - `prerelease`: whether the GitHub release should be marked as a prerelease when first created
 
-The workflow builds matching runtime tarballs from that ref, maps the Apple and Windows signing secrets to `electron-builder`, and uploads all release assets to the chosen GitHub release. The desktop build config uses `hardenedRuntime` plus an explicit mac entitlements plist at `resources/entitlements.mac.plist`.
+The workflow stages the runtime bundle needed for each desktop build inside the runner, maps the Apple and Windows signing secrets to `electron-builder`, and uploads the desktop release assets to the chosen GitHub release. The desktop build config uses `hardenedRuntime` plus an explicit mac entitlements plist at `resources/entitlements.mac.plist`.
 
 Docs publishing remains separate in `.github/workflows/deploy-docs.yml` and automatically runs only for docs changes.
 
 After a signed build, validate the produced app locally with:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 /path/to/Holaboss.app
-spctl -a -vv -t exec /path/to/Holaboss.app
-xcrun stapler validate /path/to/Holaboss.app
+codesign --verify --deep --strict --verbose=2 /path/to/holaOS.app
+spctl -a -vv -t exec /path/to/holaOS.app
+xcrun stapler validate /path/to/holaOS.app
 ```
 
 ## Project Structure

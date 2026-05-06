@@ -7,6 +7,9 @@ const explicitBin = (process.env.HOLABOSS_PACKAGED_APP_BIN || "").trim();
 
 const candidates = [
   explicitBin,
+  path.join(root, "out", "release", "mac-arm64", "holaOS.app", "Contents", "MacOS", "holaOS"),
+  path.join(root, "out", "release", "mac", "holaOS.app", "Contents", "MacOS", "holaOS"),
+  path.join(root, "out", "release", "win-unpacked", "holaOS.exe"),
   path.join(root, "out", "release", "mac-arm64", "Holaboss.app", "Contents", "MacOS", "Holaboss"),
   path.join(root, "out", "release", "mac", "Holaboss.app", "Contents", "MacOS", "Holaboss"),
   path.join(root, "out", "release", "win-unpacked", "Holaboss.exe")
