@@ -4171,6 +4171,25 @@ function enrichDesktopSentryEvent(
     delete event.request.headers.cookie;
     delete event.request.headers["x-api-key"];
   }
+
+  event.tags = {
+    ...(event.tags ?? {}),
+    desktop_launch_id: DESKTOP_LAUNCH_ID,
+    process_kind: "electron_main",
+  };
+
+  // Skip the heavy diagnostics path (sqlite reads, file attachments, event-log
+  // dumps) for non-error events — `enableLogs: true` funnels every console.*
+  // call through here.
+  const level = event.level;
+  const isErrorish =
+    level === "fatal" ||
+    level === "error" ||
+    Boolean(event.exception?.values?.length);
+  if (!isErrorish) {
+    return event;
+  }
+
   const diagnostics = readDesktopRuntimeDiagnosticsSnapshot();
   const diagnosticsAttachment = {
     filename: "desktop-runtime-diagnostics.json",
@@ -4180,11 +4199,6 @@ function enrichDesktopSentryEvent(
   addSentryHintAttachment(hint, diagnosticsAttachment);
   addSentryHintAttachment(hint, runtimeLogTailAttachment());
   addSentryHintAttachment(hint, redactedRuntimeConfigAttachment());
-  event.tags = {
-    ...(event.tags ?? {}),
-    desktop_launch_id: DESKTOP_LAUNCH_ID,
-    process_kind: "electron_main",
-  };
   event.contexts = {
     ...(event.contexts ?? {}),
     desktop_process:
@@ -4229,6 +4243,39 @@ function openRuntimeDatabase() {
   database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   database.pragma("foreign_keys = ON");
   return database;
+}
+
+// Cached sqlite handle + statement, disposed via `ensureAppQuitCleanup`.
+type CachedRuntimeStatement = {
+  get: () => Database.Statement;
+  invalidate: () => void;
+};
+const cachedRuntimeStatementDisposers: Array<() => void> = [];
+function cacheRuntimeStatement(sql: string): CachedRuntimeStatement {
+  let database: Database.Database | null = null;
+  let statement: Database.Statement | null = null;
+  const disposer = () => {
+    try {
+      database?.close();
+    } catch {
+      // ignore
+    }
+    database = null;
+    statement = null;
+  };
+  cachedRuntimeStatementDisposers.push(disposer);
+  return {
+    get() {
+      if (!database) {
+        database = openRuntimeDatabase();
+      }
+      if (!statement) {
+        statement = database.prepare(sql);
+      }
+      return statement;
+    },
+    invalidate: disposer,
+  };
 }
 
 function migrateLocalWorkspacesTable(database: Database.Database) {
@@ -4719,69 +4766,71 @@ type PersistedRuntimeProcessStateRecord = {
   updatedAt: string;
 };
 
+const readPersistedRuntimeProcessStateStatement = cacheRuntimeStatement(`
+  SELECT
+    pid,
+    status,
+    bind_host,
+    bind_port,
+    base_url,
+    launch_id,
+    sandbox_root,
+    last_started_at,
+    last_stopped_at,
+    last_healthy_at,
+    last_error,
+    updated_at
+  FROM runtime_process_state
+  WHERE process_key = ?
+  LIMIT 1
+`);
+
 function readPersistedRuntimeProcessState(): PersistedRuntimeProcessStateRecord | null {
-  const database = openRuntimeDatabase();
+  let row:
+    | {
+        pid: number | null;
+        status: string;
+        bind_host: string | null;
+        bind_port: number | null;
+        base_url: string | null;
+        launch_id: string | null;
+        sandbox_root: string | null;
+        last_started_at: string | null;
+        last_stopped_at: string | null;
+        last_healthy_at: string | null;
+        last_error: string | null;
+        updated_at: string;
+      }
+    | undefined;
   try {
-    const row = database
-      .prepare(
-        `
-        SELECT
-          pid,
-          status,
-          bind_host,
-          bind_port,
-          base_url,
-          launch_id,
-          sandbox_root,
-          last_started_at,
-          last_stopped_at,
-          last_healthy_at,
-          last_error,
-          updated_at
-        FROM runtime_process_state
-        WHERE process_key = ?
-        LIMIT 1
-      `,
-      )
-      .get("embedded-runtime") as
-      | {
-          pid: number | null;
-          status: string;
-          bind_host: string | null;
-          bind_port: number | null;
-          base_url: string | null;
-          launch_id: string | null;
-          sandbox_root: string | null;
-          last_started_at: string | null;
-          last_stopped_at: string | null;
-          last_healthy_at: string | null;
-          last_error: string | null;
-          updated_at: string;
-        }
-      | undefined;
-    if (!row) {
-      return null;
-    }
-    return {
-      pid: typeof row.pid === "number" ? row.pid : null,
-      status: row.status,
-      bindHost: row.bind_host,
-      bindPort: typeof row.bind_port === "number" ? row.bind_port : null,
-      baseUrl: row.base_url,
-      launchId: row.launch_id,
-      sandboxRoot: row.sandbox_root,
-      lastStartedAt: row.last_started_at,
-      lastStoppedAt: row.last_stopped_at,
-      lastHealthyAt: row.last_healthy_at,
-      lastError: row.last_error,
-      updatedAt: row.updated_at,
-    };
+    row = readPersistedRuntimeProcessStateStatement.get().get("embedded-runtime") as typeof row;
   } catch {
+    readPersistedRuntimeProcessStateStatement.invalidate();
     return null;
-  } finally {
-    database.close();
   }
+  if (!row) {
+    return null;
+  }
+  return {
+    pid: typeof row.pid === "number" ? row.pid : null,
+    status: row.status,
+    bindHost: row.bind_host,
+    bindPort: typeof row.bind_port === "number" ? row.bind_port : null,
+    baseUrl: row.base_url,
+    launchId: row.launch_id,
+    sandboxRoot: row.sandbox_root,
+    lastStartedAt: row.last_started_at,
+    lastStoppedAt: row.last_stopped_at,
+    lastHealthyAt: row.last_healthy_at,
+    lastError: row.last_error,
+    updatedAt: row.updated_at,
+  };
 }
+
+const appendRuntimeEventLogStatement = cacheRuntimeStatement(`
+  INSERT INTO event_log (category, event, outcome, detail, created_at)
+  VALUES (?, ?, ?, ?, ?)
+`);
 
 function appendRuntimeEventLog(event: {
   category: string;
@@ -4803,24 +4852,17 @@ function appendRuntimeEventLog(event: {
       detail: event.detail ?? null,
     },
   });
-  const database = openRuntimeDatabase();
   try {
-    database
-      .prepare(
-        `
-        INSERT INTO event_log (category, event, outcome, detail, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `,
-      )
-      .run(
-        event.category,
-        event.event,
-        event.outcome,
-        event.detail ?? null,
-        utcNowIso(),
-      );
-  } finally {
-    database.close();
+    appendRuntimeEventLogStatement.get().run(
+      event.category,
+      event.event,
+      event.outcome,
+      event.detail ?? null,
+      utcNowIso(),
+    );
+  } catch (error) {
+    appendRuntimeEventLogStatement.invalidate();
+    throw error;
   }
 }
 
@@ -12692,37 +12734,37 @@ function updateQueuedInputStatus(inputId: string, status: string) {
   }
 }
 
+const getWorkspaceRecordStatement = cacheRuntimeStatement(`
+  SELECT
+    id,
+    name,
+    status,
+    harness,
+    error_message,
+    onboarding_status,
+    onboarding_session_id,
+    onboarding_completed_at,
+    onboarding_completion_summary,
+    onboarding_requested_at,
+    onboarding_requested_by,
+    created_at,
+    updated_at,
+    deleted_at_utc
+  FROM workspaces
+  WHERE id = @id
+`);
+
 function getWorkspaceRecord(
   workspaceId: string,
 ): WorkspaceRecordPayload | null {
-  const database = openRuntimeDatabase();
   try {
-    const row = database
-      .prepare(
-        `
-        SELECT
-          id,
-          name,
-          status,
-          harness,
-          error_message,
-          onboarding_status,
-          onboarding_session_id,
-          onboarding_completed_at,
-          onboarding_completion_summary,
-          onboarding_requested_at,
-          onboarding_requested_by,
-          created_at,
-          updated_at,
-          deleted_at_utc
-        FROM workspaces
-        WHERE id = @id
-      `,
-      )
-      .get({ id: workspaceId }) as WorkspaceRecordPayload | undefined;
+    const row = getWorkspaceRecordStatement.get().get({ id: workspaceId }) as
+      | WorkspaceRecordPayload
+      | undefined;
     return row ?? null;
-  } finally {
-    database.close();
+  } catch {
+    getWorkspaceRecordStatement.invalidate();
+    return null;
   }
 }
 
@@ -15468,16 +15510,20 @@ async function ensureAppQuitCleanup(): Promise<void> {
       })
       .finally(() => {
         appQuitCleanupPromise = null;
-        // Release the long-lived sqlite handle held by
-        // `persistRuntimeProcessState`. Best-effort — the next launch
-        // re-opens fresh.
         try {
           cachedRuntimeProcessStateDatabase?.close();
         } catch {
-          // ignore close errors during teardown
+          // ignore
         }
         cachedRuntimeProcessStateDatabase = null;
         cachedRuntimeProcessStateStatement = null;
+        for (const dispose of cachedRuntimeStatementDisposers) {
+          try {
+            dispose();
+          } catch {
+            // ignore
+          }
+        }
       });
   }
   await appQuitCleanupPromise;
@@ -19342,6 +19388,10 @@ async function setActiveBrowserWorkspace(
         SESSION_BROWSER_BUSY_CHECK_MS,
       );
     }
+    // Detach the previous workspace's BrowserView when the active workspace
+    // clears (e.g. entering Workspace Control Center) — otherwise it keeps
+    // painting over the new view at its old bounds.
+    updateAttachedBrowserView();
     emitBrowserState();
     emitBookmarksState();
     emitDownloadsState();

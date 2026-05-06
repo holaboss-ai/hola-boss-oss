@@ -8668,7 +8668,6 @@ function AssistantTurnActionsMenu({
 export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
   prev.label === next.label &&
   prev.mode === next.mode &&
-  prev.showSeparator === next.showSeparator &&
   prev.showExecutionInternals === next.showExecutionInternals &&
   prev.text === next.text &&
   prev.tone === next.tone &&
@@ -8689,7 +8688,6 @@ export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
 function AssistantTurnComponent({
   label,
   mode,
-  showSeparator = false,
   showExecutionInternals = true,
   fitToContent = false,
   text,
@@ -8718,7 +8716,6 @@ function AssistantTurnComponent({
 }: {
   label: string;
   mode: string;
-  showSeparator?: boolean;
   showExecutionInternals?: boolean;
   fitToContent?: boolean;
   text: string;
@@ -8834,7 +8831,7 @@ function AssistantTurnComponent({
 
   return (
     <div
-      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-4" : ""}`.trim()}
+      className="group/assistant-turn relative flex min-w-0 justify-start"
     >
       <article
         className={
@@ -9462,7 +9459,6 @@ export function ConversationTurns<Message extends ChatMessage>({
             <AssistantTurn
               label={assistantLabel}
               mode={assistantMode}
-              showSeparator={index > 0}
               showExecutionInternals={showExecutionInternals}
               fitToContent={assistantFitToContent}
               text={message.text}
@@ -9508,7 +9504,6 @@ export function ConversationTurns<Message extends ChatMessage>({
         <AssistantTurn
           label={assistantLabel}
           mode={assistantMode}
-          showSeparator={messages.length > 0}
           showExecutionInternals={showExecutionInternals}
           fitToContent={assistantFitToContent}
           text={liveAssistantTurn.text}
