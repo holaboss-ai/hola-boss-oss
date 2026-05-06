@@ -674,7 +674,8 @@ export function buildBaseAgentPromptSections(
     "Use coordination tools instead of hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Create or update a workspace-local skill when the user describes a reusable workflow; do not create skills for one-off state."
+    "Put always-on workspace rules in `AGENTS.md`; use skills for reusable workflows that load when relevant.",
+    "Create or update a workspace-local skill for reusable workflows; do not use skills for unconditional policy or one-off state."
   ];
   if (capabilityManifest?.browser_tools.length) {
     executionLines.push(
@@ -917,7 +918,8 @@ export function buildMainSessionPromptSections(
     "Use coordination tools instead of hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Create or update a workspace-local skill when the user describes a reusable workflow; do not create skills for one-off state."
+    "Put always-on workspace rules in `AGENTS.md`; use skills for reusable workflows that load when relevant.",
+    "Create or update a workspace-local skill for reusable workflows; do not use skills for unconditional policy or one-off state."
   ];
   if (normalizedSessionKind === "onboarding") {
     conversationLines.splice(4, 0,
