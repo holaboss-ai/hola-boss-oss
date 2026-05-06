@@ -47,6 +47,7 @@ const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "pi";
 const BOOTSTRAP_IPC_TIMEOUT_MS = 8_000;
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
+type WorkspaceListLoadSource = "auto" | "live" | "cached";
 type WorkspaceBrowserBootstrapMode = "fresh" | "copy_workspace" | "import_browser";
 type WorkspaceCreatePhase =
   | "creating_workspace"
@@ -582,9 +583,19 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     };
   }, []);
 
-  async function loadWorkspaceData(options: { preserveSelection?: boolean; allowEmpty?: boolean } = {}) {
-    const { preserveSelection = true, allowEmpty = false } = options;
-    const workspaceResponse = await window.electronAPI.workspace.listWorkspaces();
+  async function loadWorkspaceData(
+    options: { preserveSelection?: boolean; allowEmpty?: boolean; source?: WorkspaceListLoadSource } = {},
+  ) {
+    const { preserveSelection = true, allowEmpty = false, source = "auto" } = options;
+    const workspaceListSource =
+      source === "auto"
+        ? runtimeReadyForWorkspaceData
+          ? "live"
+          : "cached"
+        : source;
+    const workspaceResponse = workspaceListSource === "live"
+      ? await window.electronAPI.workspace.listWorkspaces()
+      : await window.electronAPI.workspace.listWorkspacesCached();
     const nextWorkspaces = workspaceResponse.items;
     const shouldKeepPreviousWorkspaces = !allowEmpty && nextWorkspaces.length === 0 && workspaces.length > 0;
     const resolvedWorkspaces = shouldKeepPreviousWorkspaces ? workspaces : nextWorkspaces;
@@ -598,6 +609,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       }
       return resolvedWorkspaces[0]?.id ?? "";
     });
+
+    return {
+      source: workspaceListSource,
+      fetchedCount: nextWorkspaces.length,
+      resolvedCount: resolvedWorkspaces.length,
+    };
   }
 
   async function refreshWorkspaceData() {
@@ -610,9 +627,18 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       ]);
       setRuntimeConfig(nextRuntimeConfig);
       setRuntimeStatus(nextRuntimeStatus);
-      if (nextRuntimeStatus.status === "running") {
-        await loadWorkspaceData({ preserveSelection: true });
-      } else if (nextRuntimeStatus.status === "error" && nextRuntimeStatus.lastError.trim()) {
+      const workspaceListSource =
+        nextRuntimeStatus.status === "running" ? "live" : "cached";
+      const result = await loadWorkspaceData({
+        preserveSelection: true,
+        allowEmpty: workspaceListSource === "live",
+        source: workspaceListSource,
+      });
+      setHasHydratedWorkspaceList(
+        (current) =>
+          current || result.source === "live" || result.resolvedCount > 0,
+      );
+      if (nextRuntimeStatus.status === "error" && nextRuntimeStatus.lastError.trim()) {
         setWorkspaceErrorMessage(nextRuntimeStatus.lastError.trim());
       }
     } catch (error) {
@@ -1142,30 +1168,34 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   useEffect(() => {
     let cancelled = false;
 
-    // Workspace load no longer waits for `isLoadingBootstrap`. The
-    // bootstrap effect fetches runtimeConfig / clientConfig — neither
-    // is needed to render the workspace list, and on cold launch they
-    // can spend 1.5s+ retrying against a not-yet-healthy sidecar. We
-    // only gate on `runtimeReadyForWorkspaceData` (status === "running"),
-    // which is exactly what listWorkspaces actually depends on; the
-    // bootstrap APIs populate state in the background after the splash
-    // is gone.
-    if (!runtimeReadyForWorkspaceData) {
-      setIsRefreshing(false);
-      setHasHydratedWorkspaceList((current) => current || workspaces.length > 0);
-      if (runtimeStatus?.status === "error" && runtimeStatus.lastError.trim()) {
-        setWorkspaceErrorMessage((current) => current || runtimeStatus.lastError.trim());
-      }
-      return () => {
-        cancelled = true;
-      };
-    }
+    // Workspace summaries can now hydrate from either the live runtime
+    // (`listWorkspaces`) or the cached control-plane-like local registry
+    // (`listWorkspacesCached`). That lets the desktop render the workspace
+    // list before the runtime is fully ready, while still reconciling
+    // against the live runtime once it reaches `running`.
+    const workspaceListSource =
+      runtimeReadyForWorkspaceData ? "live" : "cached";
 
     async function refresh() {
       setIsRefreshing(true);
-      setWorkspaceErrorMessage("");
+      if (workspaceListSource === "live") {
+        setWorkspaceErrorMessage("");
+      }
       try {
-        await loadWorkspaceData({ preserveSelection: true });
+        const result = await loadWorkspaceData({
+          preserveSelection: true,
+          allowEmpty: workspaceListSource === "live",
+          source: workspaceListSource,
+        });
+        if (!cancelled) {
+          setHasHydratedWorkspaceList(
+            (current) =>
+              current || result.source === "live" || result.resolvedCount > 0,
+          );
+          if (runtimeStatus?.status === "error" && runtimeStatus.lastError.trim()) {
+            setWorkspaceErrorMessage((current) => current || runtimeStatus.lastError.trim());
+          }
+        }
       } catch (error) {
         if (!cancelled) {
           setWorkspaceErrorMessage(normalizeErrorMessage(error));
@@ -1173,7 +1203,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       } finally {
         if (!cancelled) {
           setIsRefreshing(false);
-          setHasHydratedWorkspaceList(true);
         }
       }
     }
