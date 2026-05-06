@@ -4171,6 +4171,36 @@ function enrichDesktopSentryEvent(
     delete event.request.headers.cookie;
     delete event.request.headers["x-api-key"];
   }
+
+  // Lightweight tags always — these are cheap and helpful even for
+  // info/warn-level events the console-logging integration funnels in.
+  event.tags = {
+    ...(event.tags ?? {}),
+    desktop_launch_id: DESKTOP_LAUNCH_ID,
+    process_kind: "electron_main",
+  };
+
+  // Everything below — sqlite reads, three file attachments, four count
+  // queries on the diagnostics database, plus full event-log / session-state
+  // dumps — only earns its keep when an actual error or fatal event is
+  // about to ship to Sentry. With `enableLogs: true` and the console
+  // integration in the same `Sentry.init`, every console.info /
+  // console.warn / console.error becomes a Sentry event and would
+  // otherwise re-run this whole diagnostics pipeline. A 114s `--cpu-prof`
+  // attributed 261 ms of self-time to a single
+  // `readPersistedRuntimeProcessState` prepare hit from here, plus 234 ms
+  // in `getAppMemory` from `@sentry/electron`'s electron-context
+  // integration which fires alongside us on every event. Gate by level so
+  // the hot path is just tag-set + secret-strip.
+  const level = event.level;
+  const isErrorish =
+    level === "fatal" ||
+    level === "error" ||
+    Boolean(event.exception?.values?.length);
+  if (!isErrorish) {
+    return event;
+  }
+
   const diagnostics = readDesktopRuntimeDiagnosticsSnapshot();
   const diagnosticsAttachment = {
     filename: "desktop-runtime-diagnostics.json",
@@ -4180,11 +4210,6 @@ function enrichDesktopSentryEvent(
   addSentryHintAttachment(hint, diagnosticsAttachment);
   addSentryHintAttachment(hint, runtimeLogTailAttachment());
   addSentryHintAttachment(hint, redactedRuntimeConfigAttachment());
-  event.tags = {
-    ...(event.tags ?? {}),
-    desktop_launch_id: DESKTOP_LAUNCH_ID,
-    process_kind: "electron_main",
-  };
   event.contexts = {
     ...(event.contexts ?? {}),
     desktop_process:
