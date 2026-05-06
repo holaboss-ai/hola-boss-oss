@@ -19415,6 +19415,17 @@ async function setActiveBrowserWorkspace(
         SESSION_BROWSER_BUSY_CHECK_MS,
       );
     }
+    // The renderer calls `browser.setActiveWorkspace(null)` from
+    // workspaceSelection.tsx whenever the selected workspace clears —
+    // typically when entering Workspace Control Center. Without this
+    // updateAttachedBrowserView call the BrowserView from the
+    // previously-active workspace stays parented to mainWindow with its
+    // last-known bounds, painting on top of the multi-workspace overview
+    // (the symptom is e.g. an `about.google` cookie banner stuck across
+    // every chat pane). The hot-path detach goes through `setBounds(0,0)`
+    // on BrowserPane unmount, but that's only reliable when BrowserPane
+    // was actually mounted in the workspace we're leaving.
+    updateAttachedBrowserView();
     emitBrowserState();
     emitBookmarksState();
     emitDownloadsState();
